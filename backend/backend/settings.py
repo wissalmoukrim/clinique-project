@@ -37,23 +37,26 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'accounts', #done
-    'patients', #done
-    'medecins', #done
-    'rendezvous', #done
-    'specialites', #done
-    'personnel', #done
-    'consultations', #done
-    'hospitalisation', #done
-    'facturation', #done
-    'ambulance', #done
-    'visiteurs', #done
+    'accounts', 
+    'patients', 
+    'medecins', 
+    'rendezvous', 
+    
+    'personnel', 
+    'consultations', 
+    'hospitalisation', 
+    'facturation', 
+    'ambulance', 
+    'visiteurs', 
     'core',
+
+    'corsheaders',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -129,3 +132,19 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# ================= CORS =================
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+]
+
+# ================= SESSION =================
+SESSION_COOKIE_SAMESITE = "None"
+SESSION_COOKIE_SECURE = False
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:3000",
+]
+

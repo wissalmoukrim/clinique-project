@@ -1,29 +1,43 @@
 from django.db import models
-from rendezvous.models import RendezVous
+from patients.models import Patient
 from medecins.models import Medecin
+from rendezvous.models import RendezVous
 
+
+# ================= CONSULTATION =================
 class Consultation(models.Model):
-    rendezvous = models.ForeignKey(RendezVous, on_delete=models.CASCADE)
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
     medecin = models.ForeignKey(Medecin, on_delete=models.CASCADE)
+    rendezvous = models.OneToOneField(RendezVous, on_delete=models.CASCADE)
+
+    date = models.DateField(auto_now_add=True)
+
     diagnostic = models.TextField()
-    notes = models.TextField(blank=True, null=True)
-    date = models.DateField(auto_now_add=True)
+    traitement = models.TextField(blank=True)
 
     def __str__(self):
-        return f"Consultation {self.id} - {self.medecin}"
-    
+        return f"Consultation {self.patient.user.username} - {self.medecin.user.username}"
+
+
+# ================= ORDONNANCE =================
 class Ordonnance(models.Model):
-    consultation = models.ForeignKey(Consultation, on_delete=models.CASCADE)
+    consultation = models.OneToOneField(Consultation, on_delete=models.CASCADE)
+
     date = models.DateField(auto_now_add=True)
+    notes = models.TextField(blank=True)
 
     def __str__(self):
-        return f"Ordonnance {self.id}"
-    
+        return f"Ordonnance {self.consultation.id}"
+
+
+# ================= MEDICAMENT =================
 class Medicament(models.Model):
-    ordonnance = models.ForeignKey(Ordonnance, on_delete=models.CASCADE)
+    ordonnance = models.ForeignKey(Ordonnance, on_delete=models.CASCADE, related_name="medicaments")
+
     nom = models.CharField(max_length=100)
     dosage = models.CharField(max_length=100)
-    duree = models.CharField(max_length=50)
+    frequence = models.CharField(max_length=100)
+    duree = models.CharField(max_length=100)
 
     def __str__(self):
         return self.nom
