@@ -1,113 +1,108 @@
-from django.http import JsonResponse
+﻿from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from .models import Facture, Paiement
+
 from consultations.models import Consultation
+from core.permissions import method_required, require_roles
+from core.utils import json_error, log_action, parse_json_body, require_fields
 from hospitalisation.models import Hospitalisation
 from patients.models import Patient
-import json
+from .models import Facture, Paiement
 
 
-# ================= LIST FACTURES =================
+def serialize_facture(facture):
+    return {
+        "id": facture.id,
+        "patient": facture.patient.user.username,
+        "montant": float(facture.montant),
+        "date": str(facture.date),
+        "statut": facture.statut,
+    }
+
+
 @csrf_exempt
 def facture_list(request):
-
     if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+        return json_error("Unauthorized", 401)
+    if request.method == "POST":
+        return create_facture(request)
+    if request.method != "GET":
+        return json_error("Method not allowed", 405)
 
     role = request.user.role
-    username = request.user.username
+    factures = Facture.objects.select_related("patient__user")
 
     if role in ["admin", "comptable"]:
-        factures = Facture.objects.all()
-
+        pass
     elif role == "patient":
-        factures = Facture.objects.filter(patient__user__username=username)
-
+        factures = factures.filter(patient__user=request.user)
     else:
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+        return json_error("Forbidden", 403)
 
-    data = [
-        {
-            "id": f.id,
-            "patient": f.patient.user.username,
-            "montant": float(f.montant),
-            "date": str(f.date),
-            "statut": f.statut
-        }
-        for f in factures
-    ]
-
-    return JsonResponse(data, safe=False)
+    log_action(request.user, "update", "facturation.Facture", "", "sensitive billing access", request)
+    return JsonResponse([serialize_facture(f) for f in factures], safe=False)
 
 
-# ================= CREATE FACTURE =================
 @csrf_exempt
+@method_required("POST")
+@require_roles("admin", "comptable")
 def create_facture(request):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
 
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+    missing = require_fields(data, ["patient_id", "montant"])
+    if missing:
+        return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
-    if request.user.role not in ["admin", "comptable"]:
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+    try:
+        patient = Patient.objects.get(id=data["patient_id"])
+    except Patient.DoesNotExist:
+        return json_error("Patient not found", 404)
 
-    if request.method == "POST":
+    consultation = None
+    hospitalisation = None
+    if data.get("consultation_id"):
         try:
-            data = json.loads(request.body)
+            consultation = Consultation.objects.get(id=data["consultation_id"])
+        except Consultation.DoesNotExist:
+            return json_error("Consultation not found", 404)
+    if data.get("hospitalisation_id"):
+        try:
+            hospitalisation = Hospitalisation.objects.get(id=data["hospitalisation_id"])
+        except Hospitalisation.DoesNotExist:
+            return json_error("Hospitalisation not found", 404)
 
-            patient = Patient.objects.get(id=data.get("patient_id"))
-
-            consultation = None
-            hospitalisation = None
-
-            if data.get("consultation_id"):
-                consultation = Consultation.objects.get(id=data.get("consultation_id"))
-
-            if data.get("hospitalisation_id"):
-                hospitalisation = Hospitalisation.objects.get(id=data.get("hospitalisation_id"))
-
-            facture = Facture.objects.create(
-                patient=patient,
-                consultation=consultation,
-                hospitalisation=hospitalisation,
-                montant=data.get("montant")
-            )
-
-            return JsonResponse({"message": "Facture créée ✅"})
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-    return JsonResponse({"error": "Method not allowed"}, status=405)
+    facture = Facture.objects.create(
+        patient=patient,
+        consultation=consultation,
+        hospitalisation=hospitalisation,
+        montant=data["montant"],
+    )
+    log_action(request.user, "create", "facturation.Facture", facture.id, request=request)
+    return JsonResponse(serialize_facture(facture), status=201)
 
 
-# ================= PAYER FACTURE =================
 @csrf_exempt
+@method_required("POST")
+@require_roles("admin", "comptable")
 def payer_facture(request, id):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
 
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+    if not data.get("mode"):
+        return json_error("Missing fields: mode", 400)
 
-    if request.user.role not in ["admin", "comptable"]:
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+    try:
+        facture = Facture.objects.get(id=id)
+    except Facture.DoesNotExist:
+        return json_error("Facture not found", 404)
 
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
+    if Paiement.objects.filter(facture=facture).exists():
+        return json_error("Facture already paid", 400)
 
-            facture = Facture.objects.get(id=id)
-
-            Paiement.objects.create(
-                facture=facture,
-                montant=facture.montant,
-                mode=data.get("mode")
-            )
-
-            facture.statut = "payé"
-            facture.save()
-
-            return JsonResponse({"message": "Paiement effectué ✅"})
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-    return JsonResponse({"error": "Method not allowed"}, status=405)
+    Paiement.objects.create(facture=facture, montant=facture.montant, mode=data["mode"])
+    facture.statut = Facture.STATUT_CHOICES[1][0]
+    facture.save(update_fields=["statut"])
+    log_action(request.user, "update", "facturation.Facture", facture.id, "payment", request)
+    return JsonResponse(serialize_facture(facture))

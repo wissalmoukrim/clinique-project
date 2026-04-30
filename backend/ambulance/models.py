@@ -1,5 +1,4 @@
 from django.db import models
-from personnel.models import Personnel
 
 
 # ================= AMBULANCE =================
@@ -18,7 +17,7 @@ class Ambulance(models.Model):
     disponible = models.BooleanField(default=True)
 
     chauffeur = models.ForeignKey(
-        Personnel,
+        "personnel.Personnel",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -34,7 +33,7 @@ class MissionAmbulance(models.Model):
     ambulance = models.ForeignKey(Ambulance, on_delete=models.CASCADE)
 
     chauffeur = models.ForeignKey(
-        Personnel,
+        "personnel.Personnel",
         on_delete=models.SET_NULL,
         null=True,
         limit_choices_to={"fonction": "chauffeur"}

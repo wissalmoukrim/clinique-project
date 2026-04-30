@@ -1,117 +1,115 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from .models import Hospitalisation, Chambre
+
 from consultations.models import Consultation
-import json
+from core.permissions import method_required, require_roles
+from core.utils import json_error, log_action, parse_json_body, require_fields
+from .models import Chambre, Hospitalisation
 
 
-# ================= LIST =================
+def serialize_hospitalisation(hosp):
+    return {
+        "id": hosp.id,
+        "patient": hosp.patient.user.username,
+        "chambre": hosp.chambre.numero if hosp.chambre else None,
+        "date_entree": str(hosp.date_entree),
+        "date_sortie": str(hosp.date_sortie) if hosp.date_sortie else None,
+        "statut": hosp.statut,
+        "motif": hosp.motif,
+    }
+
+
 @csrf_exempt
 def hospitalisation_list(request):
-
     if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+        return json_error("Unauthorized", 401)
+    if request.method == "POST":
+        return create_hospitalisation(request)
+    if request.method != "GET":
+        return json_error("Method not allowed", 405)
 
     role = request.user.role
-    username = request.user.username
+    hosp = Hospitalisation.objects.select_related("patient__user", "chambre", "consultation__medecin__user")
 
-    if role in ["admin", "secretaire"]:
-        hosp = Hospitalisation.objects.all()
-
+    if role in ["admin", "secretaire", "infirmier"]:
+        pass
     elif role == "medecin":
-        hosp = Hospitalisation.objects.filter(
-            consultation__medecin__user__username=username
-        )
-
+        hosp = hosp.filter(consultation__medecin__user=request.user)
     elif role == "patient":
-        hosp = Hospitalisation.objects.filter(
-            patient__user__username=username
-        )
-
+        hosp = hosp.filter(patient__user=request.user)
     else:
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+        return json_error("Forbidden", 403)
 
-    data = [
-        {
-            "id": h.id,
-            "patient": h.patient.user.username,
-            "chambre": h.chambre.numero if h.chambre else None,
-            "date_entree": str(h.date_entree),
-            "date_sortie": str(h.date_sortie) if h.date_sortie else None,
-            "statut": h.statut,
-            "motif": h.motif
-        }
-        for h in hosp
-    ]
-
-    return JsonResponse(data, safe=False)
+    return JsonResponse([serialize_hospitalisation(h) for h in hosp], safe=False)
 
 
-# ================= CREATE =================
 @csrf_exempt
+@method_required("POST")
+@require_roles("admin", "medecin")
 def create_hospitalisation(request):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
 
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+    missing = require_fields(data, ["consultation_id", "chambre_id", "date_entree", "motif"])
+    if missing:
+        return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
-    if request.user.role not in ["admin", "medecin"]:
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+    try:
+        consultation = Consultation.objects.select_related("patient", "medecin__user").get(id=data["consultation_id"])
+    except Consultation.DoesNotExist:
+        return json_error("Consultation not found", 404)
 
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
+    if request.user.role == "medecin" and consultation.medecin.user_id != request.user.id:
+        return json_error("Forbidden", 403)
 
-            consultation = Consultation.objects.get(id=data.get("consultation_id"))
-            chambre = Chambre.objects.get(id=data.get("chambre_id"))
+    try:
+        chambre = Chambre.objects.get(id=data["chambre_id"])
+    except Chambre.DoesNotExist:
+        return json_error("Chambre not found", 404)
 
-            hosp = Hospitalisation.objects.create(
-                patient=consultation.patient,
-                consultation=consultation,
-                chambre=chambre,
-                date_entree=data.get("date_entree"),
-                motif=data.get("motif")
-            )
+    if not chambre.disponible:
+        return json_error("Chambre not available", 400)
 
-            # 🔥 rendre chambre indisponible
-            chambre.disponible = False
-            chambre.save()
-
-            return JsonResponse({"message": "Hospitalisation créée ✅"})
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-    return JsonResponse({"error": "Method not allowed"}, status=405)
+    hosp = Hospitalisation.objects.create(
+        patient=consultation.patient,
+        consultation=consultation,
+        chambre=chambre,
+        date_entree=data["date_entree"],
+        motif=data["motif"],
+    )
+    chambre.disponible = False
+    chambre.save(update_fields=["disponible"])
+    log_action(request.user, "create", "hospitalisation.Hospitalisation", hosp.id, request=request)
+    return JsonResponse(serialize_hospitalisation(hosp), status=201)
 
 
-# ================= SORTIE =================
 @csrf_exempt
+@method_required("POST")
+@require_roles("admin", "medecin")
 def sortie_patient(request, id):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
 
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+    if not data.get("date_sortie"):
+        return json_error("Missing fields: date_sortie", 400)
 
-    if request.user.role not in ["admin", "medecin"]:
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+    try:
+        hosp = Hospitalisation.objects.select_related("chambre", "consultation__medecin__user").get(id=id)
+    except Hospitalisation.DoesNotExist:
+        return json_error("Hospitalisation not found", 404)
 
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
+    if request.user.role == "medecin" and hosp.consultation and hosp.consultation.medecin.user_id != request.user.id:
+        return json_error("Forbidden", 403)
 
-            hosp = Hospitalisation.objects.get(id=id)
+    hosp.date_sortie = data["date_sortie"]
+    hosp.statut = "sorti"
+    hosp.save(update_fields=["date_sortie", "statut"])
 
-            hosp.date_sortie = data.get("date_sortie")
-            hosp.statut = "sorti"
-            hosp.save()
+    if hosp.chambre:
+        hosp.chambre.disponible = True
+        hosp.chambre.save(update_fields=["disponible"])
 
-            # 🔥 libérer chambre
-            if hosp.chambre:
-                hosp.chambre.disponible = True
-                hosp.chambre.save()
-
-            return JsonResponse({"message": "Patient sorti ✅"})
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-    return JsonResponse({"error": "Method not allowed"}, status=405)
+    log_action(request.user, "update", "hospitalisation.Hospitalisation", hosp.id, "sortie", request)
+    return JsonResponse(serialize_hospitalisation(hosp))

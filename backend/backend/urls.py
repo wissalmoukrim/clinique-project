@@ -23,6 +23,7 @@ urlpatterns = [
 
     # 🔐 AUTH
     path('api/auth/', include('accounts.urls')),
+    path('api/core/', include('core.urls')),
 
     # 👤 MODULES MÉTIER
     path('api/patients/', include('patients.urls')),

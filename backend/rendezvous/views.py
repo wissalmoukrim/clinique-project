@@ -1,105 +1,121 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from .models import RendezVous
-from patients.models import Patient
+
+from core.permissions import method_required, require_roles
+from core.utils import json_error, log_action, parse_json_body, require_fields
 from medecins.models import Medecin
-import json
+from patients.models import Patient
+from .models import RendezVous
+
+ALLOWED_STATUTS = {choice[0] for choice in RendezVous.STATUT_CHOICES}
+STATUS_ALIASES = {
+    "valide": RendezVous.STATUT_CHOICES[1][0],
+    "validé": RendezVous.STATUT_CHOICES[1][0],
+    "confirme": RendezVous.STATUT_CHOICES[1][0],
+    "confirmé": RendezVous.STATUT_CHOICES[1][0],
+    "annule": RendezVous.STATUT_CHOICES[2][0],
+    "annulé": RendezVous.STATUT_CHOICES[2][0],
+    "en_attente": RendezVous.STATUT_CHOICES[0][0],
+}
 
 
-# ================= LIST RDV =================
+def serialize_rdv(rdv):
+    return {
+        "id": rdv.id,
+        "patient_id": rdv.patient_id,
+        "patient": rdv.patient.user.username,
+        "medecin_id": rdv.medecin_id,
+        "medecin": rdv.medecin.user.username,
+        "date": str(rdv.date),
+        "heure": str(rdv.heure),
+        "statut": rdv.statut,
+    }
+
+
 @csrf_exempt
 def rendezvous_list(request):
-
     if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+        return json_error("Unauthorized", 401)
+
+    if request.method == "POST":
+        return create_rdv(request)
+    if request.method != "GET":
+        return json_error("Method not allowed", 405)
 
     role = request.user.role
-    username = request.user.username
+    rdvs = RendezVous.objects.select_related("patient__user", "medecin__user")
 
-    # 🔥 ADMIN / SECRETAIRE → tout
     if role in ["admin", "secretaire"]:
-        rdvs = RendezVous.objects.all()
-
-    # 🔥 MEDECIN → ses RDV
+        pass
     elif role == "medecin":
-        rdvs = RendezVous.objects.filter(medecin__user__username=username)
-
-    # 🔥 PATIENT → ses RDV
+        rdvs = rdvs.filter(medecin__user=request.user)
     elif role == "patient":
-        rdvs = RendezVous.objects.filter(patient__user__username=username)
-
+        rdvs = rdvs.filter(patient__user=request.user)
     else:
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+        return json_error("Forbidden", 403)
 
-    data = [
-        {
-            "id": r.id,
-            "patient": r.patient.user.username,
-            "medecin": r.medecin.user.username,
-            "date": r.date,
-            "heure": r.heure,
-            "statut": r.statut
-        }
-        for r in rdvs
-    ]
-
-    return JsonResponse(data, safe=False)
+    return JsonResponse([serialize_rdv(r) for r in rdvs], safe=False)
 
 
-# ================= CREATE RDV =================
 @csrf_exempt
+@method_required("POST")
+@require_roles("admin", "secretaire", "patient")
 def create_rdv(request):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
 
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+    missing = require_fields(data, ["medecin_id", "date", "heure"])
+    if request.user.role in ["admin", "secretaire"] and not data.get("patient_id"):
+        missing.append("patient_id")
+    if missing:
+        return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
-    if request.user.role not in ["admin", "secretaire"]:
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+    try:
+        medecin = Medecin.objects.get(id=data["medecin_id"])
+    except Medecin.DoesNotExist:
+        return json_error("Medecin not found", 404)
 
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
+    try:
+        if request.user.role == "patient":
+            patient = Patient.objects.get(user=request.user)
+        else:
+            patient = Patient.objects.get(id=data["patient_id"])
+    except Patient.DoesNotExist:
+        return json_error("Patient not found", 404)
 
-            patient = Patient.objects.get(id=data.get("patient_id"))
-            medecin = Medecin.objects.get(id=data.get("medecin_id"))
-
-            rdv = RendezVous.objects.create(
-                patient=patient,
-                medecin=medecin,
-                date=data.get("date"),
-                heure=data.get("heure"),
-                statut="en attente"
-            )
-
-            return JsonResponse({"message": "RDV créé ✅"})
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-    return JsonResponse({"error": "Method not allowed"}, status=405)
+    rdv = RendezVous.objects.create(
+        patient=patient,
+        medecin=medecin,
+        date=data["date"],
+        heure=data["heure"],
+    )
+    log_action(request.user, "create", "rendezvous.RendezVous", rdv.id, request=request)
+    return JsonResponse(serialize_rdv(rdv), status=201)
 
 
-# ================= UPDATE STATUT =================
 @csrf_exempt
+@method_required("POST")
+@require_roles("admin", "secretaire", "medecin")
 def update_rdv_status(request, id):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
 
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+    raw_statut = data.get("statut")
+    statut = STATUS_ALIASES.get(raw_statut, raw_statut)
+    if statut not in ALLOWED_STATUTS:
+        return json_error("Invalid statut", 400)
 
-    if request.user.role not in ["admin", "secretaire"]:
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+    try:
+        rdv = RendezVous.objects.select_related("medecin__user").get(id=id)
+    except RendezVous.DoesNotExist:
+        return json_error("Rendez-vous not found", 404)
 
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
+    if request.user.role == "medecin" and rdv.medecin.user_id != request.user.id:
+        return json_error("Forbidden", 403)
 
-            rdv = RendezVous.objects.get(id=id)
-            rdv.statut = data.get("statut")
-            rdv.save()
-
-            return JsonResponse({"message": "Statut mis à jour ✅"})
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-    return JsonResponse({"error": "Method not allowed"}, status=405)
+    rdv.statut = statut
+    rdv.save(update_fields=["statut"])
+    log_action(request.user, "update", "rendezvous.RendezVous", rdv.id, request=request)
+    return JsonResponse(serialize_rdv(rdv))

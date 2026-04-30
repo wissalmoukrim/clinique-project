@@ -1,22 +1,19 @@
 from django.db import models
-from patients.models import Patient
-from consultations.models import Consultation
-from hospitalisation.models import Hospitalisation
 
 
 # ================= FACTURE =================
 class Facture(models.Model):
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
+    patient = models.ForeignKey("patients.Patient", on_delete=models.CASCADE)
 
     consultation = models.ForeignKey(
-        Consultation,
+        "consultations.Consultation",
         on_delete=models.SET_NULL,
         null=True,
         blank=True
     )
 
     hospitalisation = models.ForeignKey(
-        Hospitalisation,
+        "hospitalisation.Hospitalisation",
         on_delete=models.SET_NULL,
         null=True,
         blank=True

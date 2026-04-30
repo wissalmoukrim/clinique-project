@@ -1,10 +1,9 @@
 from django.db import models
-from accounts.models import User
 
 
 # ================= PERSONNEL =================
 class Personnel(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    user = models.OneToOneField("accounts.User", on_delete=models.CASCADE)
 
     # infos pro
     fonction = models.CharField(max_length=50)  # secretaire, infirmier, securite, comptable, chauffeur

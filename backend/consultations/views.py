@@ -1,108 +1,111 @@
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from .models import Consultation, Ordonnance, Medicament
-from rendezvous.models import RendezVous
+
+from core.permissions import method_required, require_roles
+from core.utils import json_error, log_action, parse_json_body, require_fields
 from medecins.models import Medecin
-import json
+from rendezvous.models import RendezVous
+from .models import Consultation, Medicament, Ordonnance
 
 
-# ================= LIST CONSULTATIONS =================
+def serialize_consultation(consultation):
+    ordonnance = getattr(consultation, "ordonnance", None)
+    medicaments = []
+    if ordonnance:
+        medicaments = [
+            {
+                "nom": m.nom,
+                "dosage": m.dosage,
+                "frequence": m.frequence,
+                "duree": m.duree,
+            }
+            for m in ordonnance.medicaments.all()
+        ]
+
+    return {
+        "id": consultation.id,
+        "patient": consultation.patient.user.username,
+        "medecin": consultation.medecin.user.username,
+        "date": str(consultation.date),
+        "diagnostic": consultation.diagnostic,
+        "traitement": consultation.traitement,
+        "medicaments": medicaments,
+    }
+
+
 @csrf_exempt
 def consultation_list(request):
-
     if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+        return json_error("Unauthorized", 401)
+    if request.method == "POST":
+        return create_consultation(request)
+    if request.method != "GET":
+        return json_error("Method not allowed", 405)
 
     role = request.user.role
-    username = request.user.username
+    consultations = Consultation.objects.select_related("patient__user", "medecin__user").prefetch_related("ordonnance__medicaments")
 
     if role == "admin":
-        consultations = Consultation.objects.all()
-
+        pass
     elif role == "medecin":
-        consultations = Consultation.objects.filter(medecin__user__username=username)
-
+        consultations = consultations.filter(medecin__user=request.user)
     elif role == "patient":
-        consultations = Consultation.objects.filter(patient__user__username=username)
-
+        consultations = consultations.filter(patient__user=request.user)
     else:
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+        return json_error("Forbidden", 403)
 
-    data = []
-
-    for c in consultations:
-        ordonnance = getattr(c, "ordonnance", None)
-
-        medicaments = []
-        if ordonnance:
-            medicaments = [
-                {
-                    "nom": m.nom,
-                    "dosage": m.dosage,
-                    "frequence": m.frequence,
-                    "duree": m.duree
-                }
-                for m in ordonnance.medicaments.all()
-            ]
-
-        data.append({
-            "id": c.id,
-            "patient": c.patient.user.username,
-            "medecin": c.medecin.user.username,
-            "date": str(c.date),
-            "diagnostic": c.diagnostic,
-            "traitement": c.traitement,
-            "medicaments": medicaments
-        })
-
-    return JsonResponse(data, safe=False)
+    log_action(request.user, "update", "consultations.Consultation", "", "sensitive consultation access", request)
+    return JsonResponse([serialize_consultation(c) for c in consultations], safe=False)
 
 
-# ================= CREATE CONSULTATION =================
 @csrf_exempt
+@method_required("POST")
+@require_roles("medecin")
 def create_consultation(request):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
 
-    if not request.user.is_authenticated:
-        return JsonResponse({"error": "Unauthorized ❌"}, status=401)
+    missing = require_fields(data, ["rdv_id", "diagnostic"])
+    if missing:
+        return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
-    if request.user.role != "medecin":
-        return JsonResponse({"error": "Forbidden ❌"}, status=403)
+    try:
+        rdv = RendezVous.objects.select_related("patient", "medecin__user").get(id=data["rdv_id"])
+    except RendezVous.DoesNotExist:
+        return json_error("Rendez-vous not found", 404)
 
-    if request.method == "POST":
-        try:
-            data = json.loads(request.body)
+    try:
+        medecin = Medecin.objects.get(user=request.user)
+    except Medecin.DoesNotExist:
+        return json_error("Medecin not found", 404)
 
-            rdv = RendezVous.objects.get(id=data.get("rdv_id"))
-            medecin = Medecin.objects.get(user=request.user)
+    if rdv.medecin_id != medecin.id:
+        return json_error("Forbidden", 403)
 
-            consultation = Consultation.objects.create(
-                patient=rdv.patient,
-                medecin=medecin,
-                rendezvous=rdv,
-                diagnostic=data.get("diagnostic"),
-                traitement=data.get("traitement", "")
-            )
+    if Consultation.objects.filter(rendezvous=rdv).exists():
+        return json_error("Consultation already exists for this rendez-vous", 400)
 
-            # 🔥 création ordonnance
-            ordonnance = Ordonnance.objects.create(
-                consultation=consultation
-            )
+    consultation = Consultation.objects.create(
+        patient=rdv.patient,
+        medecin=medecin,
+        rendezvous=rdv,
+        diagnostic=data["diagnostic"],
+        traitement=data.get("traitement", ""),
+    )
+    ordonnance = Ordonnance.objects.create(consultation=consultation, notes=data.get("notes", ""))
 
-            # 🔥 ajout médicaments
-            meds = data.get("medicaments", [])
+    for item in data.get("medicaments", []):
+        missing_med = require_fields(item, ["nom", "dosage", "frequence", "duree"])
+        if missing_med:
+            continue
+        Medicament.objects.create(
+            ordonnance=ordonnance,
+            nom=item["nom"],
+            dosage=item["dosage"],
+            frequence=item["frequence"],
+            duree=item["duree"],
+        )
 
-            for m in meds:
-                Medicament.objects.create(
-                    ordonnance=ordonnance,
-                    nom=m.get("nom"),
-                    dosage=m.get("dosage"),
-                    frequence=m.get("frequence"),
-                    duree=m.get("duree")
-                )
-
-            return JsonResponse({"message": "Consultation + ordonnance créée ✅"})
-
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-    return JsonResponse({"error": "Method not allowed"}, status=405)
+    log_action(request.user, "create", "consultations.Consultation", consultation.id, request=request)
+    return JsonResponse(serialize_consultation(consultation), status=201)

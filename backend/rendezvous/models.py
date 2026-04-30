@@ -1,12 +1,10 @@
 from django.db import models
-from patients.models import Patient
-from medecins.models import Medecin
 
 
 class RendezVous(models.Model):
 
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
-    medecin = models.ForeignKey(Medecin, on_delete=models.CASCADE)
+    patient = models.ForeignKey("patients.Patient", on_delete=models.CASCADE)
+    medecin = models.ForeignKey("medecins.Medecin", on_delete=models.CASCADE)
 
     date = models.DateField()
     heure = models.TimeField()

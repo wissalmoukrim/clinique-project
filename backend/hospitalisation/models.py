@@ -1,6 +1,4 @@
 from django.db import models
-from patients.models import Patient
-from consultations.models import Consultation
 
 
 # ================= CHAMBRE =================
@@ -15,10 +13,10 @@ class Chambre(models.Model):
 
 # ================= HOSPITALISATION =================
 class Hospitalisation(models.Model):
-    patient = models.ForeignKey(Patient, on_delete=models.CASCADE)
+    patient = models.ForeignKey("patients.Patient", on_delete=models.CASCADE)
 
     consultation = models.OneToOneField(
-        Consultation,
+        "consultations.Consultation",
         on_delete=models.CASCADE,
         null=True,
         blank=True

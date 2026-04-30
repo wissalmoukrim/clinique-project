@@ -1,5 +1,4 @@
 from django.db import models
-from personnel.models import Personnel
 
 
 # ================= VISITEUR =================
@@ -25,7 +24,7 @@ class JournalVisite(models.Model):
     visiteur = models.ForeignKey(Visiteur, on_delete=models.CASCADE)
 
     agent_securite = models.ForeignKey(
-        Personnel,
+        "personnel.Personnel",
         on_delete=models.SET_NULL,
         null=True,
         limit_choices_to={"fonction": "securite"}
