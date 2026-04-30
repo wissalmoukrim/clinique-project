@@ -150,6 +150,11 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# ================= SECURITY HEADERS =================
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
+
 # ================= CORS =================
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
@@ -164,6 +169,7 @@ CORS_ALLOWED_ORIGINS = [
 # ================= SESSION =================
 SESSION_COOKIE_SAMESITE = "lax"
 SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SECURE = False
 
 CSRF_TRUSTED_ORIGINS = [
     "http://localhost:3000",

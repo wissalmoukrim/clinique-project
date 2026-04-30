@@ -2,7 +2,7 @@ from functools import wraps
 
 from django.http import JsonResponse
 
-from .utils import log_action
+from .utils import log_security_event
 
 
 ROLE_ADMIN = "admin"
@@ -37,11 +37,9 @@ def require_roles(*roles):
                 return JsonResponse({"error": "Unauthorized"}, status=401)
 
             if user.role not in allowed_roles:
-                log_action(
+                log_security_event(
                     user,
-                    "update",
-                    "security",
-                    "",
+                    "forbidden_access",
                     f"forbidden access to {request.path} with role {user.role}",
                     request,
                 )

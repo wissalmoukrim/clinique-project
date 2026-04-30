@@ -1,8 +1,9 @@
-﻿from django.http import JsonResponse
+from django.core.exceptions import SuspiciousOperation
+from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from core.permissions import method_required, require_roles
-from core.utils import json_error, log_action, parse_json_body, require_fields
+from core.utils import json_error, log_action, log_security_event, optional_bool, optional_int, parse_json_body, require_fields, require_int, require_string
 from personnel.models import Personnel
 from .models import Ambulance, MissionAmbulance
 
@@ -57,21 +58,29 @@ def create_ambulance(request):
     if missing:
         return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
+    try:
+        matricule = require_string(data, "matricule", 50)
+        ambulance_type = require_string(data, "type", 50)
+        chauffeur_id = optional_int(data, "chauffeur_id")
+        disponible = optional_bool(data, "disponible", True)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
     chauffeur = None
-    if data.get("chauffeur_id"):
+    if chauffeur_id:
         try:
-            chauffeur = Personnel.objects.get(id=data["chauffeur_id"], fonction="chauffeur")
+            chauffeur = Personnel.objects.get(id=chauffeur_id, fonction="chauffeur")
         except Personnel.DoesNotExist:
             return json_error("Chauffeur not found", 404)
 
-    if Ambulance.objects.filter(matricule=data["matricule"]).exists():
+    if Ambulance.objects.filter(matricule=matricule).exists():
         return json_error("Ambulance already exists", 400)
 
     ambulance = Ambulance.objects.create(
-        matricule=data["matricule"],
-        type=data["type"],
+        matricule=matricule,
+        type=ambulance_type,
         chauffeur=chauffeur,
-        disponible=bool(data.get("disponible", True)),
+        disponible=disponible,
     )
     log_action(request.user, "create", "ambulance.Ambulance", ambulance.id, request=request)
     return JsonResponse(serialize_ambulance(ambulance), status=201)
@@ -100,7 +109,16 @@ def create_mission(request):
         return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
     try:
-        ambulance = Ambulance.objects.get(id=data["ambulance_id"])
+        ambulance_id = require_int(data, "ambulance_id")
+        patient_nom = require_string(data, "patient_nom", 100)
+        lieu_depart = require_string(data, "lieu_depart", 255)
+        lieu_arrivee = require_string(data, "lieu_arrivee", 255)
+        chauffeur_id = optional_int(data, "chauffeur_id")
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    try:
+        ambulance = Ambulance.objects.get(id=ambulance_id)
     except Ambulance.DoesNotExist:
         return json_error("Ambulance not found", 404)
 
@@ -108,7 +126,6 @@ def create_mission(request):
         if request.user.role == "chauffeur":
             chauffeur = Personnel.objects.get(user=request.user, fonction="chauffeur")
         else:
-            chauffeur_id = data.get("chauffeur_id")
             chauffeur = Personnel.objects.get(id=chauffeur_id, fonction="chauffeur") if chauffeur_id else ambulance.chauffeur
     except Personnel.DoesNotExist:
         return json_error("Chauffeur not found", 404)
@@ -118,14 +135,15 @@ def create_mission(request):
     if not ambulance.disponible:
         return json_error("Ambulance not available", 400)
     if request.user.role == "chauffeur" and ambulance.chauffeur_id and ambulance.chauffeur_id != chauffeur.id:
+        log_security_event(request.user, "forbidden_access", f"forbidden ambulance mission create for ambulance {ambulance.id}", request)
         return json_error("Forbidden", 403)
 
     mission = MissionAmbulance.objects.create(
         ambulance=ambulance,
         chauffeur=chauffeur,
-        patient_nom=data["patient_nom"],
-        lieu_depart=data["lieu_depart"],
-        lieu_arrivee=data["lieu_arrivee"],
+        patient_nom=patient_nom,
+        lieu_depart=lieu_depart,
+        lieu_arrivee=lieu_arrivee,
     )
     ambulance.disponible = False
     ambulance.save(update_fields=["disponible"])
@@ -143,6 +161,7 @@ def terminer_mission(request, id):
         return json_error("Mission not found", 404)
 
     if request.user.role == "chauffeur" and mission.chauffeur.user_id != request.user.id:
+        log_security_event(request.user, "forbidden_access", f"forbidden mission termination {id}", request)
         return json_error("Forbidden", 403)
 
     mission.statut = MissionAmbulance.STATUT_CHOICES[1][0]

@@ -1,8 +1,9 @@
 from django.http import JsonResponse
+from django.core.exceptions import SuspiciousOperation
 from django.views.decorators.csrf import csrf_exempt
 
 from core.permissions import method_required, require_roles
-from core.utils import json_error, log_action, parse_json_body, require_fields
+from core.utils import json_error, log_action, log_security_event, optional_string, parse_json_body, require_fields, require_int, require_string
 from medecins.models import Medecin
 from rendezvous.models import RendezVous
 from .models import Consultation, Medicament, Ordonnance
@@ -52,9 +53,10 @@ def consultation_list(request):
     elif role == "patient":
         consultations = consultations.filter(patient__user=request.user)
     else:
+        log_security_event(request.user, "forbidden_access", f"forbidden access to {request.path} with role {role}", request)
         return json_error("Forbidden", 403)
 
-    log_action(request.user, "update", "consultations.Consultation", "", "sensitive consultation access", request)
+    log_action(request.user, "sensitive_access", "consultations.Consultation", "", "sensitive consultation access", request)
     return JsonResponse([serialize_consultation(c) for c in consultations], safe=False)
 
 
@@ -71,7 +73,31 @@ def create_consultation(request):
         return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
     try:
-        rdv = RendezVous.objects.select_related("patient", "medecin__user").get(id=data["rdv_id"])
+        rdv_id = require_int(data, "rdv_id")
+        diagnostic = require_string(data, "diagnostic", 4000)
+        traitement = optional_string(data, "traitement", 4000)
+        notes = optional_string(data, "notes", 4000)
+        medicaments = data.get("medicaments", [])
+        if not isinstance(medicaments, list):
+            raise SuspiciousOperation("Invalid input")
+        validated_medicaments = []
+        for item in medicaments:
+            if not isinstance(item, dict):
+                raise SuspiciousOperation("Invalid input")
+            missing_med = require_fields(item, ["nom", "dosage", "frequence", "duree"])
+            if missing_med:
+                continue
+            validated_medicaments.append({
+                "nom": require_string(item, "nom", 100),
+                "dosage": require_string(item, "dosage", 100),
+                "frequence": require_string(item, "frequence", 100),
+                "duree": require_string(item, "duree", 100),
+            })
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    try:
+        rdv = RendezVous.objects.select_related("patient", "medecin__user").get(id=rdv_id)
     except RendezVous.DoesNotExist:
         return json_error("Rendez-vous not found", 404)
 
@@ -81,6 +107,7 @@ def create_consultation(request):
         return json_error("Medecin not found", 404)
 
     if rdv.medecin_id != medecin.id:
+        log_security_event(request.user, "forbidden_access", f"forbidden consultation create for rdv {rdv.id}", request)
         return json_error("Forbidden", 403)
 
     if Consultation.objects.filter(rendezvous=rdv).exists():
@@ -90,15 +117,12 @@ def create_consultation(request):
         patient=rdv.patient,
         medecin=medecin,
         rendezvous=rdv,
-        diagnostic=data["diagnostic"],
-        traitement=data.get("traitement", ""),
+        diagnostic=diagnostic,
+        traitement=traitement,
     )
-    ordonnance = Ordonnance.objects.create(consultation=consultation, notes=data.get("notes", ""))
+    ordonnance = Ordonnance.objects.create(consultation=consultation, notes=notes)
 
-    for item in data.get("medicaments", []):
-        missing_med = require_fields(item, ["nom", "dosage", "frequence", "duree"])
-        if missing_med:
-            continue
+    for item in validated_medicaments:
         Medicament.objects.create(
             ordonnance=ordonnance,
             nom=item["nom"],

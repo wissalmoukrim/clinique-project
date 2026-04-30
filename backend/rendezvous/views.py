@@ -1,8 +1,9 @@
 from django.http import JsonResponse
+from django.core.exceptions import SuspiciousOperation
 from django.views.decorators.csrf import csrf_exempt
 
 from core.permissions import method_required, require_roles
-from core.utils import json_error, log_action, parse_json_body, require_fields
+from core.utils import json_error, log_action, log_security_event, parse_json_body, require_fields, require_int, require_string
 from medecins.models import Medecin
 from patients.models import Patient
 from .models import RendezVous
@@ -52,8 +53,10 @@ def rendezvous_list(request):
     elif role == "patient":
         rdvs = rdvs.filter(patient__user=request.user)
     else:
+        log_security_event(request.user, "forbidden_access", f"forbidden access to {request.path} with role {role}", request)
         return json_error("Forbidden", 403)
 
+    log_action(request.user, "sensitive_access", "rendezvous.RendezVous", "", "rendezvous list access", request)
     return JsonResponse([serialize_rdv(r) for r in rdvs], safe=False)
 
 
@@ -72,7 +75,15 @@ def create_rdv(request):
         return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
     try:
-        medecin = Medecin.objects.get(id=data["medecin_id"])
+        medecin_id = require_int(data, "medecin_id")
+        patient_id = require_int(data, "patient_id") if request.user.role in ["admin", "secretaire"] else None
+        date = require_string(data, "date", 20)
+        heure = require_string(data, "heure", 20)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    try:
+        medecin = Medecin.objects.get(id=medecin_id)
     except Medecin.DoesNotExist:
         return json_error("Medecin not found", 404)
 
@@ -80,15 +91,15 @@ def create_rdv(request):
         if request.user.role == "patient":
             patient = Patient.objects.get(user=request.user)
         else:
-            patient = Patient.objects.get(id=data["patient_id"])
+            patient = Patient.objects.get(id=patient_id)
     except Patient.DoesNotExist:
         return json_error("Patient not found", 404)
 
     rdv = RendezVous.objects.create(
         patient=patient,
         medecin=medecin,
-        date=data["date"],
-        heure=data["heure"],
+        date=date,
+        heure=heure,
     )
     log_action(request.user, "create", "rendezvous.RendezVous", rdv.id, request=request)
     return JsonResponse(serialize_rdv(rdv), status=201)
@@ -102,7 +113,11 @@ def update_rdv_status(request, id):
     if data is None:
         return json_error("Invalid JSON", 400)
 
-    raw_statut = data.get("statut")
+    try:
+        raw_statut = require_string(data, "statut", 30)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
     statut = STATUS_ALIASES.get(raw_statut, raw_statut)
     if statut not in ALLOWED_STATUTS:
         return json_error("Invalid statut", 400)
@@ -113,6 +128,7 @@ def update_rdv_status(request, id):
         return json_error("Rendez-vous not found", 404)
 
     if request.user.role == "medecin" and rdv.medecin.user_id != request.user.id:
+        log_security_event(request.user, "forbidden_access", f"forbidden rendezvous status update {id}", request)
         return json_error("Forbidden", 403)
 
     rdv.statut = statut

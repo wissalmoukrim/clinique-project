@@ -1,9 +1,10 @@
+from django.core.exceptions import SuspiciousOperation
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from consultations.models import Consultation
 from core.permissions import method_required, require_roles
-from core.utils import json_error, log_action, parse_json_body, require_fields
+from core.utils import json_error, log_action, log_security_event, parse_json_body, require_fields, require_int, require_string
 from .models import Chambre, Hospitalisation
 
 
@@ -38,8 +39,10 @@ def hospitalisation_list(request):
     elif role == "patient":
         hosp = hosp.filter(patient__user=request.user)
     else:
+        log_security_event(request.user, "forbidden_access", f"forbidden access to {request.path} with role {role}", request)
         return json_error("Forbidden", 403)
 
+    log_action(request.user, "sensitive_access", "hospitalisation.Hospitalisation", "", "hospitalisation list access", request)
     return JsonResponse([serialize_hospitalisation(h) for h in hosp], safe=False)
 
 
@@ -56,15 +59,24 @@ def create_hospitalisation(request):
         return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
     try:
-        consultation = Consultation.objects.select_related("patient", "medecin__user").get(id=data["consultation_id"])
+        consultation_id = require_int(data, "consultation_id")
+        chambre_id = require_int(data, "chambre_id")
+        date_entree = require_string(data, "date_entree", 20)
+        motif = require_string(data, "motif", 255)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    try:
+        consultation = Consultation.objects.select_related("patient", "medecin__user").get(id=consultation_id)
     except Consultation.DoesNotExist:
         return json_error("Consultation not found", 404)
 
     if request.user.role == "medecin" and consultation.medecin.user_id != request.user.id:
+        log_security_event(request.user, "forbidden_access", f"forbidden hospitalisation create for consultation {consultation.id}", request)
         return json_error("Forbidden", 403)
 
     try:
-        chambre = Chambre.objects.get(id=data["chambre_id"])
+        chambre = Chambre.objects.get(id=chambre_id)
     except Chambre.DoesNotExist:
         return json_error("Chambre not found", 404)
 
@@ -75,8 +87,8 @@ def create_hospitalisation(request):
         patient=consultation.patient,
         consultation=consultation,
         chambre=chambre,
-        date_entree=data["date_entree"],
-        motif=data["motif"],
+        date_entree=date_entree,
+        motif=motif,
     )
     chambre.disponible = False
     chambre.save(update_fields=["disponible"])
@@ -96,14 +108,20 @@ def sortie_patient(request, id):
         return json_error("Missing fields: date_sortie", 400)
 
     try:
+        date_sortie = require_string(data, "date_sortie", 20)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    try:
         hosp = Hospitalisation.objects.select_related("chambre", "consultation__medecin__user").get(id=id)
     except Hospitalisation.DoesNotExist:
         return json_error("Hospitalisation not found", 404)
 
     if request.user.role == "medecin" and hosp.consultation and hosp.consultation.medecin.user_id != request.user.id:
+        log_security_event(request.user, "forbidden_access", f"forbidden hospitalisation sortie {id}", request)
         return json_error("Forbidden", 403)
 
-    hosp.date_sortie = data["date_sortie"]
+    hosp.date_sortie = date_sortie
     hosp.statut = "sorti"
     hosp.save(update_fields=["date_sortie", "statut"])
 

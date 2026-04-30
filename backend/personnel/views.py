@@ -1,9 +1,10 @@
+from django.core.exceptions import SuspiciousOperation
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from accounts.models import User
 from core.permissions import method_required, require_roles
-from core.utils import json_error, log_action, parse_json_body, require_fields
+from core.utils import json_error, log_action, optional_string, parse_json_body, require_fields, require_int
 from .models import Personnel
 
 PERSONNEL_ROLES = {"secretaire", "infirmier", "comptable", "securite", "chauffeur"}
@@ -46,7 +47,14 @@ def create_personnel(request):
         return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
     try:
-        user = User.objects.get(id=data["user_id"])
+        user_id = require_int(data, "user_id")
+        telephone = optional_string(data, "telephone", 20)
+        adresse = optional_string(data, "adresse", 255)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    try:
+        user = User.objects.get(id=user_id)
     except User.DoesNotExist:
         return json_error("User not found", 404)
 
@@ -58,8 +66,8 @@ def create_personnel(request):
     personnel = Personnel.objects.create(
         user=user,
         fonction=user.role,
-        telephone=data.get("telephone", ""),
-        adresse=data.get("adresse", ""),
+        telephone=telephone,
+        adresse=adresse,
     )
     log_action(request.user, "create", "personnel.Personnel", personnel.id, request=request)
     return JsonResponse(serialize_personnel(personnel), status=201)

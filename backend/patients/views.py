@@ -1,9 +1,12 @@
 from django.http import JsonResponse
+from django.core.exceptions import SuspiciousOperation
 from django.views.decorators.csrf import csrf_exempt
 
 from accounts.models import User
+from consultations.models import Consultation
 from core.permissions import method_required, require_roles
-from core.utils import json_error, log_action, parse_json_body, require_fields
+from core.utils import json_error, log_action, optional_string, parse_json_body, require_fields, require_int
+from rendezvous.models import RendezVous
 from .models import Patient
 
 
@@ -27,7 +30,17 @@ def serialize_patient(patient):
 def patient_list(request):
     if request.method == "GET":
         patients = Patient.objects.select_related("user").all()
-        log_action(request.user, "update", "patients.Patient", "", "sensitive patient list access", request)
+        if request.user.role == "medecin":
+            consultation_patient_ids = Consultation.objects.filter(
+                medecin__user=request.user,
+            ).values_list("patient_id", flat=True)
+            rendezvous_patient_ids = RendezVous.objects.filter(
+                medecin__user=request.user,
+            ).values_list("patient_id", flat=True)
+            patients = patients.filter(
+                id__in=list(consultation_patient_ids) + list(rendezvous_patient_ids),
+            ).distinct()
+        log_action(request.user, "sensitive_access", "patients.Patient", "", "sensitive patient list access", request)
         return JsonResponse([serialize_patient(p) for p in patients], safe=False)
     if request.method == "POST":
         return create_patient(request)
@@ -47,7 +60,19 @@ def create_patient(request):
         return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
     try:
-        user = User.objects.get(id=data["user_id"])
+        user_id = require_int(data, "user_id")
+        telephone = optional_string(data, "telephone", 20)
+        adresse = optional_string(data, "adresse", 255)
+        date_naissance = optional_string(data, "date_naissance", 20) or None
+        sexe = optional_string(data, "sexe", 10)
+        groupe_sanguin = optional_string(data, "groupe_sanguin", 5)
+        allergies = optional_string(data, "allergies", 2000)
+        antecedents = optional_string(data, "antecedents", 2000)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    try:
+        user = User.objects.get(id=user_id)
     except User.DoesNotExist:
         return json_error("User not found", 404)
 
@@ -59,13 +84,13 @@ def create_patient(request):
 
     patient = Patient.objects.create(
         user=user,
-        telephone=data.get("telephone", ""),
-        adresse=data.get("adresse", ""),
-        date_naissance=data.get("date_naissance") or None,
-        sexe=data.get("sexe", ""),
-        groupe_sanguin=data.get("groupe_sanguin", ""),
-        allergies=data.get("allergies", ""),
-        antecedents=data.get("antecedents", ""),
+        telephone=telephone,
+        adresse=adresse,
+        date_naissance=date_naissance,
+        sexe=sexe,
+        groupe_sanguin=groupe_sanguin,
+        allergies=allergies,
+        antecedents=antecedents,
     )
     log_action(request.user, "create", "patients.Patient", patient.id, request=request)
     return JsonResponse(serialize_patient(patient), status=201)
@@ -79,7 +104,7 @@ def my_profile(request):
         patient = Patient.objects.select_related("user").get(user=request.user)
     except Patient.DoesNotExist:
         return json_error("Patient not found", 404)
-    log_action(request.user, "update", "patients.Patient", patient.id, "patient profile access", request)
+    log_action(request.user, "sensitive_access", "patients.Patient", patient.id, "patient profile access", request)
     return JsonResponse(serialize_patient(patient))
 
 

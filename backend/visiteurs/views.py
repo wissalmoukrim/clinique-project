@@ -1,9 +1,10 @@
-﻿from django.http import JsonResponse
+from django.core.exceptions import SuspiciousOperation
+from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from core.permissions import method_required, require_roles
-from core.utils import json_error, log_action, parse_json_body, require_fields
+from core.utils import json_error, log_action, log_security_event, optional_string, parse_json_body, require_fields, require_int, require_string
 from personnel.models import Personnel
 from .models import JournalVisite, Visiteur
 
@@ -53,11 +54,19 @@ def create_visiteur(request):
     if missing:
         return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
+    try:
+        nom = require_string(data, "nom", 100)
+        prenom = require_string(data, "prenom", 100)
+        cin = optional_string(data, "cin", 50) or None
+        telephone = optional_string(data, "telephone", 20)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
     visiteur = Visiteur.objects.create(
-        nom=data["nom"],
-        prenom=data["prenom"],
-        cin=data.get("cin") or None,
-        telephone=data.get("telephone", ""),
+        nom=nom,
+        prenom=prenom,
+        cin=cin,
+        telephone=telephone,
     )
     log_action(request.user, "create", "visiteurs.Visiteur", visiteur.id, request=request)
     return JsonResponse(serialize_visiteur(visiteur), status=201)
@@ -76,7 +85,13 @@ def entree_visiteur(request):
         return json_error(f"Missing fields: {', '.join(missing)}", 400)
 
     try:
-        visiteur = Visiteur.objects.get(id=data["visiteur_id"])
+        visiteur_id = require_int(data, "visiteur_id")
+        motif = optional_string(data, "motif", 255) or "visite"
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    try:
+        visiteur = Visiteur.objects.get(id=visiteur_id)
     except Visiteur.DoesNotExist:
         return json_error("Visiteur not found", 404)
 
@@ -88,7 +103,7 @@ def entree_visiteur(request):
     journal = JournalVisite.objects.create(
         visiteur=visiteur,
         agent_securite=agent,
-        motif=data.get("motif", "visite"),
+        motif=motif,
     )
     log_action(request.user, "create", "visiteurs.JournalVisite", journal.id, "entry", request)
     return JsonResponse({"id": journal.id, "message": "Entry saved"}, status=201)
@@ -103,14 +118,20 @@ def sortie_visiteur(request, id):
         return json_error("Invalid JSON", 400)
 
     try:
+        date_sortie = optional_string(data, "date_sortie", 40) or timezone.now()
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    try:
         visite = JournalVisite.objects.select_related("agent_securite__user").get(id=id)
     except JournalVisite.DoesNotExist:
         return json_error("Visit log not found", 404)
 
     if visite.agent_securite and visite.agent_securite.user_id != request.user.id:
+        log_security_event(request.user, "forbidden_access", f"forbidden visitor exit {id}", request)
         return json_error("Forbidden", 403)
 
-    visite.date_sortie = data.get("date_sortie") or timezone.now()
+    visite.date_sortie = date_sortie
     visite.statut = JournalVisite.STATUT_CHOICES[1][0]
     visite.save(update_fields=["date_sortie", "statut"])
     log_action(request.user, "update", "visiteurs.JournalVisite", visite.id, "exit", request)
