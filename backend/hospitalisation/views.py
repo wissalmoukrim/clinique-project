@@ -48,7 +48,7 @@ def hospitalisation_list(request):
 
 @csrf_exempt
 @method_required("POST")
-@require_roles("admin", "medecin")
+@require_roles("medecin")
 def create_hospitalisation(request):
     data = parse_json_body(request)
     if data is None:
@@ -82,6 +82,8 @@ def create_hospitalisation(request):
 
     if not chambre.disponible:
         return json_error("Chambre not available", 400)
+    if Hospitalisation.objects.filter(consultation=consultation).exists():
+        return json_error("Hospitalisation already exists for this consultation", 400)
 
     hosp = Hospitalisation.objects.create(
         patient=consultation.patient,
@@ -121,8 +123,11 @@ def sortie_patient(request, id):
         log_security_event(request.user, "forbidden_access", f"forbidden hospitalisation sortie {id}", request)
         return json_error("Forbidden", 403)
 
+    if hosp.statut == "termine":
+        return json_error("Hospitalisation already completed", 400)
+
     hosp.date_sortie = date_sortie
-    hosp.statut = "sorti"
+    hosp.statut = "termine"
     hosp.save(update_fields=["date_sortie", "statut"])
 
     if hosp.chambre:

@@ -163,6 +163,8 @@ def terminer_mission(request, id):
     if request.user.role == "chauffeur" and mission.chauffeur.user_id != request.user.id:
         log_security_event(request.user, "forbidden_access", f"forbidden mission termination {id}", request)
         return json_error("Forbidden", 403)
+    if mission.statut == MissionAmbulance.STATUT_CHOICES[1][0]:
+        return json_error("Mission already terminated", 400)
 
     mission.statut = MissionAmbulance.STATUT_CHOICES[1][0]
     mission.save(update_fields=["statut"])

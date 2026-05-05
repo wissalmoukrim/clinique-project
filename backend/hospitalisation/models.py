@@ -30,14 +30,14 @@ class Hospitalisation(models.Model):
     motif = models.TextField(default="")
 
     STATUT_CHOICES = [
-        ('en cours', 'En cours'),
-        ('sorti', 'Sorti'),
+        ('en_cours', 'En cours'),
+        ('termine', 'Termine'),
     ]
 
     statut = models.CharField(
         max_length=20,
         choices=STATUT_CHOICES,
-        default='en cours'
+        default='en_cours'
     )
 
     def __str__(self):

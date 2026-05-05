@@ -10,6 +10,7 @@ class Consultation(models.Model):
     date = models.DateField(auto_now_add=True)
 
     diagnostic = models.TextField()
+    notes = models.TextField(blank=True)
     traitement = models.TextField(blank=True)
 
     def __str__(self):

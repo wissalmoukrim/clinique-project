@@ -10,15 +10,16 @@ class RendezVous(models.Model):
     heure = models.TimeField()
 
     STATUT_CHOICES = [
-        ("en attente", "En attente"),
-        ("validé", "Validé"),
-        ("annulé", "Annulé"),
+        ("en_attente", "En attente"),
+        ("confirme", "Confirme"),
+        ("annule", "Annule"),
+        ("termine", "Termine"),
     ]
 
     statut = models.CharField(
         max_length=20,
         choices=STATUT_CHOICES,
-        default="en attente"
+        default="en_attente"
     )
 
     date_creation = models.DateTimeField(auto_now_add=True)

@@ -2,13 +2,12 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "../../api/client";
 import Navbar from "../../components/Navbar";
 
-const RDV_STATUTS = ["en attente", "validé", "annulé"];
-
 function AdminDashboard() {
   const [patients, setPatients] = useState([]);
   const [medecins, setMedecins] = useState([]);
   const [rendezvous, setRendezvous] = useState([]);
   const [ambulances, setAmbulances] = useState([]);
+  const [security, setSecurity] = useState({ summary: {}, logs: [], locked_users: [] });
   const [patientForm, setPatientForm] = useState({ user_id: "", telephone: "", adresse: "" });
   const [medecinForm, setMedecinForm] = useState({ user_id: "", specialite: "", telephone: "", experience: "" });
   const [ambulanceForm, setAmbulanceForm] = useState({ matricule: "", type: "standard" });
@@ -20,17 +19,19 @@ function AdminDashboard() {
   const loadDashboard = async () => {
     setError("");
     try {
-      const [patientsData, medecinsData, rendezvousData, ambulancesData] = await Promise.all([
+      const [patientsData, medecinsData, rendezvousData, ambulancesData, securityData] = await Promise.all([
         apiFetch("/patients/"),
         apiFetch("/medecins/"),
         apiFetch("/rendezvous/"),
         apiFetch("/ambulance/"),
+        apiFetch("/core/security/"),
       ]);
 
       setPatients(Array.isArray(patientsData) ? patientsData : []);
       setMedecins(Array.isArray(medecinsData) ? medecinsData : []);
       setRendezvous(Array.isArray(rendezvousData) ? rendezvousData : []);
       setAmbulances(Array.isArray(ambulancesData) ? ambulancesData : []);
+      setSecurity(securityData || { summary: {}, logs: [], locked_users: [] });
     } catch (err) {
       setError(err.message || "Erreur de chargement");
     } finally {
@@ -115,22 +116,6 @@ function AdminDashboard() {
     }
   };
 
-  const updateRdvStatus = async (rdvId, statut) => {
-    setMessage("");
-    setError("");
-
-    try {
-      await apiFetch(`/rendezvous/${rdvId}/status/`, {
-        method: "POST",
-        body: { statut },
-      });
-      setMessage("Statut mis a jour");
-      await loadDashboard();
-    } catch (err) {
-      setError(err.message || "Mise a jour impossible");
-    }
-  };
-
   return (
     <>
       <Navbar />
@@ -142,6 +127,7 @@ function AdminDashboard() {
           <Stat label="Medecins" value={medecins.length} />
           <Stat label="Rendez-vous" value={rendezvous.length} />
           <Stat label="Ambulances" value={ambulances.length} />
+          <Stat label="Alertes securite" value={security.summary?.alerts || 0} />
         </div>
 
         {loading && <p>Chargement...</p>}
@@ -290,6 +276,72 @@ function AdminDashboard() {
             </section>
 
             <section className="panel">
+              <h2>Securite</h2>
+              <div className="stats compact-stats">
+                <Stat label="Echecs login" value={security.summary?.failed_logins || 0} />
+                <Stat label="Acces interdits" value={security.summary?.forbidden_access || 0} />
+                <Stat label="Comptes bloques" value={security.summary?.locked_accounts || 0} />
+                <Stat label="Utilisateurs actifs" value={security.summary?.active_users || 0} />
+              </div>
+
+              {security.locked_users?.length > 0 && (
+                <>
+                  <h3>Comptes bloques</h3>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th>Tentatives</th>
+                        <th>Dernier echec</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {security.locked_users.map((user) => (
+                        <tr key={user.id}>
+                          <td>{user.id}</td>
+                          <td>{user.username}</td>
+                          <td>{user.role}</td>
+                          <td>{user.login_attempts}</td>
+                          <td>{formatDate(user.last_failed_login)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+
+              <h3>Audit logs</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>User</th>
+                    <th>Action</th>
+                    <th>Resource</th>
+                    <th>Resource ID</th>
+                    <th>IP</th>
+                    <th>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {security.logs?.map((log) => (
+                    <tr key={log.id}>
+                      <td>{formatDate(log.timestamp)}</td>
+                      <td>{log.user}</td>
+                      <td><span className={`badge ${log.action}`}>{log.action}</span></td>
+                      <td>{log.resource || "-"}</td>
+                      <td>{log.resource_id || log.object_id || "-"}</td>
+                      <td>{log.ip_address || "-"}</td>
+                      <td>{log.details || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+
+            <section className="panel">
               <h2>Medecins</h2>
               <table>
                 <thead>
@@ -324,7 +376,6 @@ function AdminDashboard() {
                     <th>Date</th>
                     <th>Heure</th>
                     <th>Statut</th>
-                    <th>Update</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -335,14 +386,7 @@ function AdminDashboard() {
                       <td>{rdv.medecin}</td>
                       <td>{rdv.date}</td>
                       <td>{rdv.heure}</td>
-                      <td>{rdv.statut}</td>
-                      <td>
-                        <select value={rdv.statut} onChange={(e) => updateRdvStatus(rdv.id, e.target.value)}>
-                          {RDV_STATUTS.map((statut) => (
-                            <option key={statut} value={statut}>{statut}</option>
-                          ))}
-                        </select>
-                      </td>
+                      <td><span className={`badge badge-${rdv.statut}`}>{rdv.statut}</span></td>
                     </tr>
                   ))}
                 </tbody>
@@ -388,6 +432,13 @@ function Stat({ label, value }) {
       <strong>{value}</strong>
     </div>
   );
+}
+
+function formatDate(value) {
+  if (!value) {
+    return "-";
+  }
+  return new Date(value).toLocaleString();
 }
 
 export default AdminDashboard;

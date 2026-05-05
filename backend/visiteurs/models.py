@@ -36,14 +36,38 @@ class JournalVisite(models.Model):
     date_sortie = models.DateTimeField(null=True, blank=True)
 
     STATUT_CHOICES = [
-        ("en cours", "En cours"),
-        ("terminé", "Terminé"),
+        ("en_cours", "En cours"),
+        ("sorti", "Sorti"),
     ]
 
     statut = models.CharField(
         max_length=20,
         choices=STATUT_CHOICES,
-        default="en cours"
+        default="en_cours"
+    )
+
+    def __str__(self):
+        return f"{self.visiteur} - {self.statut}"
+
+
+# ================= VISITE =================
+class Visite(models.Model):
+    visiteur = models.ForeignKey(Visiteur, on_delete=models.CASCADE, related_name="visites")
+
+    motif = models.CharField(max_length=255)
+
+    date_entree = models.DateTimeField(auto_now_add=True)
+    date_sortie = models.DateTimeField(null=True, blank=True)
+
+    STATUT_CHOICES = [
+        ("en_cours", "En cours"),
+        ("sorti", "Sorti"),
+    ]
+
+    statut = models.CharField(
+        max_length=20,
+        choices=STATUT_CHOICES,
+        default="en_cours"
     )
 
     def __str__(self):

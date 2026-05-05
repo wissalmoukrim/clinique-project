@@ -23,14 +23,14 @@ class Facture(models.Model):
     date = models.DateField(auto_now_add=True)
 
     STATUT_CHOICES = [
-        ('non payé', 'Non payé'),
-        ('payé', 'Payé'),
+        ('impaye', 'Impaye'),
+        ('paye', 'Paye'),
     ]
 
     statut = models.CharField(
         max_length=20,
         choices=STATUT_CHOICES,
-        default='non payé'
+        default='impaye'
     )
 
     def __str__(self):

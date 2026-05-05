@@ -10,6 +10,10 @@ function Dashboard() {
       <Navbar />
       <main className="page shell-page">
         <h1>Dashboard {user?.role}</h1>
+        <div className="stats">
+          <Stat label="Espace" value="1" />
+          <Stat label="Role" value={user?.role?.slice(0, 3).toUpperCase() || "-"} />
+        </div>
         <section className="panel profile-panel">
           <h2>{user?.username}</h2>
           <p>Role: <strong>{user?.role}</strong></p>
@@ -23,6 +27,35 @@ function Dashboard() {
       </main>
     </>
   );
+}
+
+function Stat({ label, value }) {
+  return (
+    <div className="stat">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+const RDV_STATUS_LABELS = {
+  en_attente: "EN ATTENTE",
+  confirme: "CONFIRME",
+  annule: "ANNULE",
+  termine: "TERMINE",
+};
+
+function rdvStatusLabel(statut) {
+  return RDV_STATUS_LABELS[statut] || String(statut || "-").replace("_", " ").toUpperCase();
+}
+
+const FACTURE_STATUS_LABELS = {
+  impaye: "IMPAYE",
+  paye: "PAYE",
+};
+
+function factureStatusLabel(statut) {
+  return FACTURE_STATUS_LABELS[statut] || String(statut || "-").replace("_", " ").toUpperCase();
 }
 
 function SecretairePanel() {
@@ -67,6 +100,22 @@ function SecretairePanel() {
     }
   };
 
+  const updateRdvStatus = async (rdvId, statut) => {
+    setError("");
+    setMessage("");
+
+    try {
+      await apiFetch(`/rendezvous/${rdvId}/update-status/`, {
+        method: "PUT",
+        body: { statut },
+      });
+      setMessage(statut === "confirme" ? "Rendez-vous confirme" : "Rendez-vous annule");
+      await load();
+    } catch (err) {
+      setError(err.message || "Mise a jour impossible");
+    }
+  };
+
   return (
     <>
       <Status error={error} message={message} />
@@ -90,7 +139,44 @@ function SecretairePanel() {
         </form>
       </section>
       <SimpleTable title="Patients" rows={patients} columns={["id", "username", "telephone"]} />
-      <SimpleTable title="Rendez-vous" rows={rdvs} columns={["id", "patient", "medecin", "date", "heure", "statut"]} />
+      <section className="panel">
+        <h2>Rendez-vous</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Patient</th>
+              <th>Medecin</th>
+              <th>Date</th>
+              <th>Heure</th>
+              <th>Statut</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rdvs.map((rdv) => (
+              <tr key={rdv.id}>
+                <td>{rdv.id}</td>
+                <td>{rdv.patient}</td>
+                <td>{rdv.medecin}</td>
+                <td>{rdv.date}</td>
+                <td>{rdv.heure}</td>
+                <td><span className={`badge badge-${rdv.statut}`}>{rdvStatusLabel(rdv.statut)}</span></td>
+                <td>
+                  <div className="row-actions">
+                    <button type="button" onClick={() => updateRdvStatus(rdv.id, "confirme")} disabled={rdv.statut === "confirme"}>
+                      Confirmer
+                    </button>
+                    <button type="button" className="danger" onClick={() => updateRdvStatus(rdv.id, "annule")} disabled={rdv.statut === "annule"}>
+                      Annuler
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
     </>
   );
 }
@@ -170,8 +256,8 @@ function ComptablePanel() {
           <tbody>
             {factures.map((f) => (
               <tr key={f.id}>
-                <td>{f.id}</td><td>{f.patient}</td><td>{f.montant}</td><td>{f.date}</td><td>{f.statut}</td>
-                <td><button type="button" onClick={() => pay(f.id)}>Update</button></td>
+                <td>{f.id}</td><td>{f.patient}</td><td>{f.montant}</td><td>{f.date}</td><td><span className={`badge badge-${f.statut}`}>{factureStatusLabel(f.statut)}</span></td>
+                <td><button type="button" onClick={() => pay(f.id)} disabled={f.statut === "paye"}>Encaisser</button></td>
               </tr>
             ))}
           </tbody>
@@ -183,15 +269,22 @@ function ComptablePanel() {
 
 function SecuritePanel() {
   const [visiteurs, setVisiteurs] = useState([]);
-  const [journal, setJournal] = useState([]);
+  const [visites, setVisites] = useState([]);
+  const [presentVisits, setPresentVisits] = useState([]);
   const [form, setForm] = useState({ nom: "", prenom: "", cin: "", telephone: "" });
+  const [visitForm, setVisitForm] = useState({ visiteur_id: "", motif: "" });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
   const load = async () => {
-    const [visiteursData, journalData] = await Promise.all([apiFetch("/visiteurs/"), apiFetch("/visiteurs/journal/")]);
+    const [visiteursData, visitesData, presentsData] = await Promise.all([
+      apiFetch("/visiteurs/"),
+      apiFetch("/visites/"),
+      apiFetch("/visites/presents/"),
+    ]);
     setVisiteurs(Array.isArray(visiteursData) ? visiteursData : []);
-    setJournal(Array.isArray(journalData) ? journalData : []);
+    setVisites(Array.isArray(visitesData) ? visitesData : []);
+    setPresentVisits(Array.isArray(presentsData) ? presentsData : []);
   };
 
   useEffect(() => {
@@ -210,9 +303,45 @@ function SecuritePanel() {
     }
   };
 
+  const activeVisitorIds = new Set(presentVisits.map((entry) => entry.visiteur_id));
+
+  const createVisite = async (event) => {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+
+    try {
+      await apiFetch("/visites/entree/", {
+        method: "POST",
+        body: visitForm,
+      });
+      setVisitForm({ visiteur_id: "", motif: "" });
+      setMessage("Entree enregistree");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const exitVisiteur = async (journalId) => {
+    setError("");
+    setMessage("");
+
+    try {
+      await apiFetch(`/visites/${journalId}/sortie/`, { method: "PUT" });
+      setMessage("Sortie enregistree");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   return (
     <>
       <Status error={error} message={message} />
+      <div className="stats">
+        <Stat label="Visiteurs presents" value={presentVisits.length} />
+      </div>
       <section className="panel">
         <h2>Enregistrer visiteur</h2>
         <form className="inline-form" onSubmit={createVisiteur}>
@@ -223,8 +352,96 @@ function SecuritePanel() {
           <button type="submit">Add</button>
         </form>
       </section>
-      <SimpleTable title="Visiteurs" rows={visiteurs} columns={["id", "nom", "prenom", "cin", "telephone"]} />
-      <SimpleTable title="Journal visites" rows={journal} columns={["id", "visiteur", "motif", "date_entree", "date_sortie", "statut"]} />
+      <section className="panel">
+        <h2>Visiteurs</h2>
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Nom</th><th>Prenom</th><th>CIN</th><th>Telephone</th><th>Presence</th></tr>
+          </thead>
+          <tbody>
+            {visiteurs.map((visiteur) => (
+              <tr key={visiteur.id}>
+                <td>{visiteur.id}</td>
+                <td>{visiteur.nom}</td>
+                <td>{visiteur.prenom}</td>
+                <td>{visiteur.cin || "-"}</td>
+                <td>{visiteur.telephone || "-"}</td>
+                <td>
+                  {activeVisitorIds.has(visiteur.id) ? <span className="badge badge-en_cours">present</span> : <span className="badge badge-sorti">absent</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+      <section className="panel">
+        <h2>Action</h2>
+        <form className="inline-form" onSubmit={createVisite}>
+          <select
+            value={visitForm.visiteur_id}
+            onChange={(e) => setVisitForm({ ...visitForm, visiteur_id: e.target.value })}
+            required
+          >
+            <option value="">Selectionner visiteur</option>
+            {visiteurs.map((visiteur) => (
+              <option key={visiteur.id} value={visiteur.id} disabled={activeVisitorIds.has(visiteur.id)}>
+                {visiteur.nom} {visiteur.prenom}
+              </option>
+            ))}
+          </select>
+          <input
+            placeholder="motif"
+            value={visitForm.motif}
+            onChange={(e) => setVisitForm({ ...visitForm, motif: e.target.value })}
+            required
+          />
+          <button type="submit">Entree</button>
+        </form>
+      </section>
+      <section className="panel">
+        <h2>Visiteurs presents</h2>
+        {presentVisits.length === 0 ? (
+          <p>Aucun visiteur actuellement</p>
+        ) : (
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Visiteur</th><th>Motif</th><th>Date entree</th><th>Statut</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+              {presentVisits.map((entry) => (
+                <tr key={entry.id}>
+                  <td>{entry.id}</td>
+                  <td>{entry.visiteur}</td>
+                  <td>{entry.motif}</td>
+                  <td>{entry.date_entree}</td>
+                  <td><span className="badge badge-en_cours">en_cours</span></td>
+                  <td><button type="button" onClick={() => exitVisiteur(entry.id)}>Sortie</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+      <section className="panel">
+        <h2>Historique</h2>
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Visiteur</th><th>Motif</th><th>Date entree</th><th>Date sortie</th><th>Statut</th></tr>
+          </thead>
+          <tbody>
+            {visites.map((entry) => (
+              <tr key={entry.id}>
+                <td>{entry.id}</td>
+                <td>{entry.visiteur}</td>
+                <td>{entry.motif}</td>
+                <td>{entry.date_entree}</td>
+                <td>{entry.date_sortie || "-"}</td>
+                <td><span className={`badge badge-${entry.statut}`}>{entry.statut}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
     </>
   );
 }
@@ -291,7 +508,7 @@ function ChauffeurPanel() {
           <tbody>
             {missions.map((m) => (
               <tr key={m.id}>
-                <td>{m.id}</td><td>{m.ambulance}</td><td>{m.patient_nom}</td><td>{m.lieu_depart}</td><td>{m.lieu_arrivee}</td><td>{m.statut}</td>
+                <td>{m.id}</td><td>{m.ambulance}</td><td>{m.patient_nom}</td><td>{m.lieu_depart}</td><td>{m.lieu_arrivee}</td><td><span className="badge">{m.statut}</span></td>
                 <td><button type="button" onClick={() => finishMission(m.id)}>Update</button></td>
               </tr>
             ))}

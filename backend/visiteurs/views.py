@@ -6,7 +6,7 @@ from django.views.decorators.csrf import csrf_exempt
 from core.permissions import method_required, require_roles
 from core.utils import json_error, log_action, log_security_event, optional_string, parse_json_body, require_fields, require_int, require_string
 from personnel.models import Personnel
-from .models import JournalVisite, Visiteur
+from .models import JournalVisite, Visite, Visiteur
 
 
 def serialize_visiteur(visiteur):
@@ -22,6 +22,7 @@ def serialize_visiteur(visiteur):
 def serialize_journal(journal):
     return {
         "id": journal.id,
+        "visiteur_id": journal.visiteur_id,
         "visiteur": str(journal.visiteur),
         "agent_securite": journal.agent_securite.user.username if journal.agent_securite else None,
         "motif": journal.motif,
@@ -29,6 +30,35 @@ def serialize_journal(journal):
         "date_sortie": str(journal.date_sortie) if journal.date_sortie else None,
         "statut": journal.statut,
     }
+
+
+def serialize_visite(visite):
+    return {
+        "id": visite.id,
+        "visiteur_id": visite.visiteur_id,
+        "visiteur": str(visite.visiteur),
+        "motif": visite.motif,
+        "date_entree": str(visite.date_entree),
+        "date_sortie": str(visite.date_sortie) if visite.date_sortie else None,
+        "statut": visite.statut,
+    }
+
+
+def normalize_journal_statut(statut):
+    if statut in ["en cours", "en_cours"]:
+        return "en_cours"
+    if statut in ["terminé", "terminÃ©", "sorti"]:
+        return "sorti"
+    return statut
+
+
+def get_security_personnel(user):
+    personnel = Personnel.objects.filter(user=user, fonction="securite").first()
+    if personnel:
+        return personnel
+    if user.role == "securite":
+        return Personnel.objects.create(user=user, fonction="securite")
+    return None
 
 
 @csrf_exempt
@@ -95,32 +125,42 @@ def entree_visiteur(request):
     except Visiteur.DoesNotExist:
         return json_error("Visiteur not found", 404)
 
-    try:
-        agent = Personnel.objects.get(user=request.user, fonction="securite")
-    except Personnel.DoesNotExist:
+    agent = get_security_personnel(request.user)
+    if not agent:
         return json_error("Security personnel profile not found", 404)
 
-    journal = JournalVisite.objects.create(
+    if Visite.objects.filter(visiteur=visiteur, statut="en_cours").exists():
+        return json_error("Visitor already has an active entry", 400)
+
+    visite = Visite.objects.create(
         visiteur=visiteur,
-        agent_securite=agent,
         motif=motif,
+        date_entree=timezone.now(),
+        date_sortie=None,
+        statut="en_cours",
     )
-    log_action(request.user, "create", "visiteurs.JournalVisite", journal.id, "entry", request)
-    return JsonResponse({"id": journal.id, "message": "Entry saved"}, status=201)
+    log_action(request.user, "create", "visiteurs.Visite", visite.id, f"entry by personnel {agent.id}", request)
+    return JsonResponse(serialize_visite(visite), status=201)
 
 
 @csrf_exempt
-@method_required("POST")
+@method_required("POST", "PUT")
 @require_roles("securite")
 def sortie_visiteur(request, id):
-    data = parse_json_body(request)
-    if data is None:
-        return json_error("Invalid JSON", 400)
-
     try:
-        date_sortie = optional_string(data, "date_sortie", 40) or timezone.now()
-    except SuspiciousOperation:
-        return json_error("Invalid input", 400)
+        visite = Visite.objects.select_related("visiteur").get(id=id)
+    except Visite.DoesNotExist:
+        visite = None
+
+    if visite:
+        if visite.statut != "en_cours":
+            return json_error("Visit already closed", 400)
+
+        visite.date_sortie = timezone.now()
+        visite.statut = "sorti"
+        visite.save(update_fields=["date_sortie", "statut"])
+        log_action(request.user, "update", "visiteurs.Visite", visite.id, "exit", request)
+        return JsonResponse(serialize_visite(visite))
 
     try:
         visite = JournalVisite.objects.select_related("agent_securite__user").get(id=id)
@@ -131,18 +171,96 @@ def sortie_visiteur(request, id):
         log_security_event(request.user, "forbidden_access", f"forbidden visitor exit {id}", request)
         return json_error("Forbidden", 403)
 
-    visite.date_sortie = date_sortie
-    visite.statut = JournalVisite.STATUT_CHOICES[1][0]
+    visite.statut = normalize_journal_statut(visite.statut)
+    if visite.statut != "en_cours":
+        return json_error("Visit log already closed", 400)
+
+    visite.date_sortie = timezone.now()
+    visite.statut = "sorti"
     visite.save(update_fields=["date_sortie", "statut"])
     log_action(request.user, "update", "visiteurs.JournalVisite", visite.id, "exit", request)
-    return JsonResponse({"message": "Exit saved"})
+    return JsonResponse(serialize_journal(visite))
 
 
 @csrf_exempt
 @method_required("GET")
 @require_roles("admin", "securite", "secretaire")
 def journal_visites(request):
-    journaux = JournalVisite.objects.select_related("visiteur", "agent_securite__user").all()
-    if request.user.role == "securite":
-        journaux = journaux.filter(agent_securite__user=request.user)
-    return JsonResponse([serialize_journal(j) for j in journaux], safe=False)
+    visites = Visite.objects.select_related("visiteur").all()
+    return JsonResponse([serialize_visite(v) for v in visites], safe=False)
+
+
+@csrf_exempt
+@method_required("GET")
+@require_roles("securite")
+def visite_list(request):
+    visites = Visite.objects.select_related("visiteur").all().order_by("-date_entree")
+    return JsonResponse([serialize_visite(v) for v in visites], safe=False)
+
+
+@csrf_exempt
+@method_required("GET")
+@require_roles("securite")
+def visites_presentes(request):
+    visites = Visite.objects.select_related("visiteur").filter(statut="en_cours").order_by("-date_entree")
+    return JsonResponse([serialize_visite(v) for v in visites], safe=False)
+
+
+@csrf_exempt
+@method_required("POST")
+@require_roles("securite")
+def create_visite_entree(request):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
+
+    missing = require_fields(data, ["visiteur_id", "motif"])
+    if missing:
+        return json_error(f"Missing fields: {', '.join(missing)}", 400)
+
+    try:
+        visiteur_id = require_int(data, "visiteur_id")
+        motif = require_string(data, "motif", 255)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    try:
+        visiteur = Visiteur.objects.get(id=visiteur_id)
+    except Visiteur.DoesNotExist:
+        return json_error("Visiteur not found", 404)
+
+    agent = get_security_personnel(request.user)
+    if not agent:
+        return json_error("Security personnel profile not found", 404)
+
+    if Visite.objects.filter(visiteur=visiteur, statut="en_cours").exists():
+        return json_error("Visitor already has an active visit", 400)
+
+    visite = Visite.objects.create(
+        visiteur=visiteur,
+        motif=motif,
+        date_entree=timezone.now(),
+        date_sortie=None,
+        statut="en_cours",
+    )
+    log_action(request.user, "create", "visiteurs.Visite", visite.id, f"entry by personnel {agent.id}", request)
+    return JsonResponse(serialize_visite(visite), status=201)
+
+
+@csrf_exempt
+@method_required("PUT")
+@require_roles("securite")
+def sortie_visite(request, id):
+    try:
+        visite = Visite.objects.select_related("visiteur").get(id=id)
+    except Visite.DoesNotExist:
+        return json_error("Visit not found", 404)
+
+    if visite.statut != "en_cours":
+        return json_error("Visit already closed", 400)
+
+    visite.date_sortie = timezone.now()
+    visite.statut = "sorti"
+    visite.save(update_fields=["date_sortie", "statut"])
+    log_action(request.user, "update", "visiteurs.Visite", visite.id, "exit", request)
+    return JsonResponse(serialize_visite(visite))

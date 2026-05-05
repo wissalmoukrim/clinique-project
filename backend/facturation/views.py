@@ -20,6 +20,14 @@ def serialize_facture(facture):
     }
 
 
+def normalize_facture_statut(statut):
+    if statut in ["payé", "payÃ©", "payÃƒÂ©"]:
+        return "paye"
+    if statut in ["non payé", "non payÃ©", "non payÃƒÂ©", "impayé"]:
+        return "impaye"
+    return statut
+
+
 @csrf_exempt
 def facture_list(request):
     if not request.user.is_authenticated:
@@ -80,11 +88,17 @@ def create_facture(request):
             consultation = Consultation.objects.get(id=consultation_id)
         except Consultation.DoesNotExist:
             return json_error("Consultation not found", 404)
+        if consultation.patient_id != patient.id:
+            return json_error("Consultation does not belong to this patient", 400)
+        if Facture.objects.filter(consultation=consultation).exists():
+            return json_error("Invoice already exists for this consultation", 400)
     if hospitalisation_id:
         try:
             hospitalisation = Hospitalisation.objects.get(id=hospitalisation_id)
         except Hospitalisation.DoesNotExist:
             return json_error("Hospitalisation not found", 404)
+        if hospitalisation.patient_id != patient.id:
+            return json_error("Hospitalisation does not belong to this patient", 400)
 
     facture = Facture.objects.create(
         patient=patient,
@@ -98,7 +112,7 @@ def create_facture(request):
 
 @csrf_exempt
 @method_required("POST")
-@require_roles("admin", "comptable")
+@require_roles("comptable")
 def payer_facture(request, id):
     data = parse_json_body(request)
     if data is None:
@@ -117,11 +131,14 @@ def payer_facture(request, id):
     except Facture.DoesNotExist:
         return json_error("Facture not found", 404)
 
+    facture.statut = normalize_facture_statut(facture.statut)
     if Paiement.objects.filter(facture=facture).exists():
+        return json_error("Facture already paid", 400)
+    if facture.statut == "paye":
         return json_error("Facture already paid", 400)
 
     Paiement.objects.create(facture=facture, montant=facture.montant, mode=mode)
-    facture.statut = Facture.STATUT_CHOICES[1][0]
+    facture.statut = "paye"
     facture.save(update_fields=["statut"])
     log_action(request.user, "update", "facturation.Facture", facture.id, "payment", request)
     return JsonResponse(serialize_facture(facture))

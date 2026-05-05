@@ -1,6 +1,8 @@
 export const API_BASE_URL = "http://127.0.0.1:8000";
 export const API_URL = `${API_BASE_URL}/api`;
 
+// JWTs are stored in localStorage to keep this academic/dev project simple.
+// In production, prefer short-lived access tokens with refresh tokens in HTTP-only secure cookies.
 export function getAccessToken() {
   return localStorage.getItem("access");
 }
@@ -137,7 +139,7 @@ export async function apiFetch(endpoint, options = {}) {
   const data = await readJson(response);
 
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       logout();
       window.location.href = "/login";
     }
