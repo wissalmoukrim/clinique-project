@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     'core',
     'rest_framework',
     'corsheaders',
+    'chatbot',
 ]
 
 AUTH_USER_MODEL = 'accounts.User'

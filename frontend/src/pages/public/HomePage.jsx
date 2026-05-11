@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import Navbar from "../../components/Navbar";
 import { IMAGES } from "../../assets/images";
+import Chatbot from "../../components/Chatbot";
 
 const SERVICES = [
   { title: "Consultations specialisees", text: "Des parcours de soin coordonnes avec des medecins disponibles." },
@@ -88,6 +89,8 @@ function HomePage() {
           </div>
           <Link className="primary-link" to="/prendre-rdv">Prendre RDV</Link>
         </section>
+        
+        <Chatbot />
 
         <footer className="footer">
           <strong>Clinique Medicale Elite</strong>

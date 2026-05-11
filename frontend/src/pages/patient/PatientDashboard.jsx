@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { apiFetch } from "../../api/client";
 import Navbar from "../../components/Navbar";
+import Chatbot from "../../components/Chatbot";
 
 const RDV_STATUS_LABELS = {
   en_attente: "EN ATTENTE",
@@ -162,6 +163,7 @@ function PatientDashboard() {
             </section>
           </>
         )}
+        <Chatbot />
       </main>
     </>
   );

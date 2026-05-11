@@ -12,6 +12,7 @@ import MedecinsPublic from "./pages/public/MedecinsPublic";
 import Contact from "./pages/public/Contact";
 import PrendreRdvPublic from "./pages/public/PrendreRdvPublic";
 
+
 function App() {
   return (
     <BrowserRouter>
@@ -58,6 +59,9 @@ function App() {
             </ProtectedRoute>
           }
         />
+
+          
+
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
