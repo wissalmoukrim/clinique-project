@@ -11,9 +11,13 @@ from .models import Facture, Paiement
 
 
 def serialize_facture(facture):
+    patient_name = facture.patient.user.get_full_name().strip() or facture.patient.user.username
     return {
         "id": facture.id,
         "patient": facture.patient.user.username,
+        "patient_id": facture.patient_id,
+        "patient_full_name": patient_name,
+        "patient_display": patient_name,
         "montant": float(facture.montant),
         "date": str(facture.date),
         "statut": facture.statut,

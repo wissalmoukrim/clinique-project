@@ -57,14 +57,15 @@ class MissionAmbulance(models.Model):
     date = models.DateTimeField(auto_now_add=True)
 
     STATUT_CHOICES = [
-        ("en cours", "En cours"),
-        ("terminée", "Terminée"),
+        ("en_attente", "En attente"),
+        ("en_cours", "En cours"),
+        ("terminee", "Terminee"),
     ]
 
     statut = models.CharField(
         max_length=20,
         choices=STATUT_CHOICES,
-        default="en cours"
+        default="en_attente"
     )
 
     def __str__(self):

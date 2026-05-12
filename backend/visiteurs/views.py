@@ -92,6 +92,11 @@ def create_visiteur(request):
     except SuspiciousOperation:
         return json_error("Invalid input", 400)
 
+    if cin and Visiteur.objects.filter(cin=cin).exists():
+        return json_error("CIN already exists", 400)
+    if telephone and not all(char.isdigit() or char in " +-.()" for char in telephone):
+        return json_error("Invalid telephone", 400)
+
     visiteur = Visiteur.objects.create(
         nom=nom,
         prenom=prenom,

@@ -4,6 +4,7 @@ const ROLE_LINKS = {
   admin: [
     { to: "/admin", label: "Vue generale", icon: "A" },
     { to: "/admin", label: "Patients", icon: "P" },
+    { to: "/admin#personnel", label: "Personnel", icon: "U" },
     { to: "/admin", label: "Securite", icon: "S" },
   ],
   medecin: [

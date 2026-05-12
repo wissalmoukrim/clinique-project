@@ -3,6 +3,7 @@ from django.core.exceptions import SuspiciousOperation, ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 from django.http import JsonResponse
+from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_time
 from django.utils.crypto import get_random_string
 from django.views.decorators.csrf import csrf_exempt
@@ -31,12 +32,19 @@ STATUS_ALIASES = {
 
 
 def serialize_rdv(rdv):
+    patient_name = rdv.patient.user.get_full_name().strip() or rdv.patient.user.username
+    medecin_name = rdv.medecin.user.get_full_name().strip() or rdv.medecin.user.username
     return {
         "id": rdv.id,
         "patient_id": rdv.patient_id,
         "patient": rdv.patient.user.username,
+        "patient_full_name": patient_name,
+        "patient_display": patient_name,
         "medecin_id": rdv.medecin_id,
         "medecin": rdv.medecin.user.username,
+        "medecin_full_name": medecin_name,
+        "medecin_display": f"Dr. {medecin_name}",
+        "specialite": rdv.medecin.specialite,
         "date": str(rdv.date),
         "heure": str(rdv.heure),
         "statut": rdv.statut,
@@ -146,7 +154,7 @@ def create_public_rdv(request):
                 patient.telephone = telephone
                 patient.save(update_fields=["telephone"])
         else:
-            temporary_password = get_random_string(14)
+            temporary_password = get_random_string(14) + "aA1!"
             user = User.objects.create_user(
                 username=email,
                 email=email,
@@ -229,7 +237,7 @@ def create_rdv(request):
 
 @csrf_exempt
 @method_required("POST", "PUT")
-@require_roles("secretaire")
+@require_roles("secretaire", "patient")
 def update_rdv_status(request, id):
     data = parse_json_body(request)
     if data is None:
@@ -245,9 +253,19 @@ def update_rdv_status(request, id):
         return json_error("Invalid statut", 400)
 
     try:
-        rdv = RendezVous.objects.get(id=id)
+        rdv = RendezVous.objects.select_related("patient__user", "medecin__user").get(id=id)
     except RendezVous.DoesNotExist:
         return json_error("Rendez-vous not found", 404)
+
+    if request.user.role == "patient":
+        if statut != "annule":
+            return json_error("Patients can only cancel appointments", 403)
+        if rdv.patient.user_id != request.user.id:
+            log_security_event(request.user, "forbidden_access", f"forbidden appointment cancellation {rdv.id}", request)
+            return json_error("Forbidden", 403)
+        if rdv.date < timezone.localdate() or rdv.statut in ["annule", "termine"]:
+            log_security_event(request.user, "forbidden_access", f"forbidden appointment cancellation state {rdv.id}", request)
+            return json_error("Only upcoming appointments can be cancelled", 403)
 
     if statut == "confirme" and medecin_has_confirmed_slot(rdv.medecin, rdv.date, rdv.heure, exclude_id=rdv.id):
         return json_error("This appointment slot is already confirmed for this doctor", 400)
@@ -256,3 +274,50 @@ def update_rdv_status(request, id):
     rdv.save(update_fields=["statut"])
     log_action(request.user, "update", "rendezvous.RendezVous", rdv.id, request=request)
     return JsonResponse(serialize_rdv(rdv))
+
+
+@csrf_exempt
+@method_required("PUT", "PATCH")
+@require_roles("admin", "secretaire")
+def update_rdv(request, id):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
+
+    try:
+        rdv = RendezVous.objects.get(id=id)
+        medecin = Medecin.objects.get(id=require_int(data, "medecin_id"))
+        patient = Patient.objects.get(id=require_int(data, "patient_id"))
+        date = require_string(data, "date", 20)
+        heure = require_string(data, "heure", 20)
+        statut = STATUS_ALIASES.get(optional_string(data, "statut", 30), optional_string(data, "statut", 30)) or rdv.statut
+    except (SuspiciousOperation, Medecin.DoesNotExist, Patient.DoesNotExist, RendezVous.DoesNotExist):
+        return json_error("Invalid input", 400)
+
+    if statut not in ALLOWED_STATUTS:
+        return json_error("Invalid statut", 400)
+    if medecin_has_confirmed_slot(medecin, date, heure, exclude_id=rdv.id):
+        return json_error("This appointment slot is already confirmed for this doctor", 400)
+
+    rdv.patient = patient
+    rdv.medecin = medecin
+    rdv.date = date
+    rdv.heure = heure
+    rdv.statut = statut
+    rdv.save()
+    log_action(request.user, "update", "rendezvous.RendezVous", rdv.id, request=request)
+    return JsonResponse(serialize_rdv(rdv))
+
+
+@csrf_exempt
+@method_required("DELETE")
+@require_roles("admin", "secretaire")
+def delete_rdv(request, id):
+    try:
+        rdv = RendezVous.objects.get(id=id)
+    except RendezVous.DoesNotExist:
+        return json_error("Rendez-vous not found", 404)
+
+    rdv.delete()
+    log_action(request.user, "delete", "rendezvous.RendezVous", id, request=request)
+    return JsonResponse({"message": "Rendez-vous deleted"})

@@ -11,6 +11,8 @@ class AuditLog(models.Model):
         ("forbidden_access", "Forbidden access"),
         ("sensitive_access", "Sensitive data access"),
         ("security_alert", "Security alert"),
+        ("chatbot_query", "Chatbot query"),
+        ("chatbot_blocked", "Chatbot blocked"),
         ("create", "Create"),
         ("update", "Update"),
         ("delete", "Delete"),
@@ -28,6 +30,7 @@ class AuditLog(models.Model):
     object_id = models.CharField(max_length=100, blank=True)
     details = models.TextField(blank=True)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
+    status = models.CharField(max_length=20, default="success")
     timestamp = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

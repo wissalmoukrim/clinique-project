@@ -36,6 +36,7 @@ def serialize_audit_log(log):
         "object_id": log.object_id,
         "details": log.details,
         "ip_address": log.ip_address,
+        "status": log.status,
         "timestamp": log.timestamp.isoformat(),
     }
 

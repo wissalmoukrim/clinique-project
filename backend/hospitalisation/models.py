@@ -28,6 +28,10 @@ class Hospitalisation(models.Model):
     date_sortie = models.DateField(null=True, blank=True)
 
     motif = models.TextField(default="")
+    observations = models.TextField(blank=True, default="")
+    temperature = models.CharField(max_length=20, blank=True, default="")
+    tension = models.CharField(max_length=20, blank=True, default="")
+    frequence_cardiaque = models.CharField(max_length=20, blank=True, default="")
 
     STATUT_CHOICES = [
         ('en_cours', 'En cours'),

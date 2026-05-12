@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { publicFetch } from "../api/client";
 
 function Chatbot() {
 
@@ -26,17 +27,12 @@ function Chatbot() {
 
         try {
 
-            const res = await fetch("http://127.0.0.1:8000/api/chatbot/ask/", {
+            const data = await publicFetch("/chatbot/ask/", {
                 method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    message: message
-                })
+                body: {
+                    message: message.slice(0, 500)
+                }
             });
-
-            const data = await res.json();
 
             const botMessage = {
                 sender: "bot",

@@ -9,20 +9,25 @@ from .models import Ambulance, MissionAmbulance
 
 
 def serialize_ambulance(ambulance):
+    chauffeur_name = ambulance.chauffeur.user.get_full_name().strip() if ambulance.chauffeur else ""
     return {
         "id": ambulance.id,
         "matricule": ambulance.matricule,
         "type": ambulance.type,
         "disponible": ambulance.disponible,
         "chauffeur": ambulance.chauffeur.user.username if ambulance.chauffeur else None,
+        "chauffeur_display": chauffeur_name or (ambulance.chauffeur.user.username if ambulance.chauffeur else None),
     }
 
 
 def serialize_mission(mission):
+    chauffeur_name = mission.chauffeur.user.get_full_name().strip() if mission.chauffeur else ""
     return {
         "id": mission.id,
+        "ambulance_id": mission.ambulance_id,
         "ambulance": mission.ambulance.matricule,
         "chauffeur": mission.chauffeur.user.username if mission.chauffeur else None,
+        "chauffeur_display": chauffeur_name or (mission.chauffeur.user.username if mission.chauffeur else None),
         "patient_nom": mission.patient_nom,
         "lieu_depart": mission.lieu_depart,
         "lieu_arrivee": mission.lieu_arrivee,
@@ -87,6 +92,58 @@ def create_ambulance(request):
 
 
 @csrf_exempt
+@method_required("PUT", "PATCH")
+@require_roles("admin")
+def update_ambulance(request, ambulance_id):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
+
+    try:
+        ambulance = Ambulance.objects.get(id=ambulance_id)
+        matricule = require_string(data, "matricule", 50) if "matricule" in data else ambulance.matricule
+        ambulance_type = require_string(data, "type", 50) if "type" in data else ambulance.type
+        chauffeur_id = optional_int(data, "chauffeur_id")
+        disponible = optional_bool(data, "disponible", ambulance.disponible)
+    except (SuspiciousOperation, Ambulance.DoesNotExist):
+        return json_error("Invalid input", 400)
+
+    chauffeur = ambulance.chauffeur
+    if "chauffeur_id" in data and not chauffeur_id:
+        chauffeur = None
+    elif chauffeur_id:
+        try:
+            chauffeur = Personnel.objects.get(id=chauffeur_id, fonction="chauffeur")
+        except Personnel.DoesNotExist:
+            return json_error("Chauffeur not found", 404)
+
+    if Ambulance.objects.exclude(id=ambulance_id).filter(matricule=matricule).exists():
+        return json_error("Ambulance already exists", 400)
+
+    ambulance.matricule = matricule
+    ambulance.type = ambulance_type
+    ambulance.chauffeur = chauffeur
+    ambulance.disponible = disponible
+    ambulance.save()
+    log_action(request.user, "update", "ambulance.Ambulance", ambulance.id, request=request)
+    return JsonResponse(serialize_ambulance(ambulance))
+
+
+@csrf_exempt
+@method_required("DELETE")
+@require_roles("admin")
+def delete_ambulance(request, ambulance_id):
+    try:
+        ambulance = Ambulance.objects.get(id=ambulance_id)
+    except Ambulance.DoesNotExist:
+        return json_error("Ambulance not found", 404)
+
+    ambulance.delete()
+    log_action(request.user, "delete", "ambulance.Ambulance", ambulance_id, request=request)
+    return JsonResponse({"message": "Ambulance deleted"})
+
+
+@csrf_exempt
 @method_required("GET")
 @require_roles("admin", "chauffeur")
 def mission_list(request):
@@ -148,7 +205,30 @@ def create_mission(request):
     ambulance.disponible = False
     ambulance.save(update_fields=["disponible"])
     log_action(request.user, "create", "ambulance.MissionAmbulance", mission.id, request=request)
-    return JsonResponse({"id": mission.id, "message": "Mission created"}, status=201)
+    return JsonResponse(serialize_mission(mission), status=201)
+
+
+@csrf_exempt
+@method_required("POST")
+@require_roles("admin", "chauffeur")
+def start_mission(request, id):
+    try:
+        mission = MissionAmbulance.objects.select_related("ambulance", "chauffeur__user").get(id=id)
+    except MissionAmbulance.DoesNotExist:
+        return json_error("Mission not found", 404)
+
+    if request.user.role == "chauffeur" and mission.chauffeur.user_id != request.user.id:
+        log_security_event(request.user, "forbidden_access", f"forbidden mission start {id}", request)
+        return json_error("Forbidden", 403)
+    if mission.statut == "terminee":
+        return json_error("Mission already terminated", 400)
+
+    mission.statut = "en_cours"
+    mission.save(update_fields=["statut"])
+    mission.ambulance.disponible = False
+    mission.ambulance.save(update_fields=["disponible"])
+    log_action(request.user, "update", "ambulance.MissionAmbulance", mission.id, "started", request)
+    return JsonResponse(serialize_mission(mission))
 
 
 @csrf_exempt
@@ -163,10 +243,10 @@ def terminer_mission(request, id):
     if request.user.role == "chauffeur" and mission.chauffeur.user_id != request.user.id:
         log_security_event(request.user, "forbidden_access", f"forbidden mission termination {id}", request)
         return json_error("Forbidden", 403)
-    if mission.statut == MissionAmbulance.STATUT_CHOICES[1][0]:
+    if mission.statut in ["terminee", "terminée"]:
         return json_error("Mission already terminated", 400)
 
-    mission.statut = MissionAmbulance.STATUT_CHOICES[1][0]
+    mission.statut = "terminee"
     mission.save(update_fields=["statut"])
     mission.ambulance.disponible = True
     mission.ambulance.save(update_fields=["disponible"])

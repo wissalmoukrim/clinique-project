@@ -1,103 +1,71 @@
-from rest_framework.decorators import api_view, permission_classes
+from datetime import timedelta
+
+from django.core.exceptions import SuspiciousOperation
+from django.utils import timezone
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-import os
+from rest_framework.throttling import AnonRateThrottle
+
+from core.chatbot import FORBIDDEN_TOPICS, public_chatbot_response
+from core.models import AuditLog
+from core.utils import clean_text, get_client_ip, log_action, log_security_event
 
 
-@api_view(['POST'])
+PROMPT_INJECTION_MARKERS = {
+    "ignore previous",
+    "ignore instructions",
+    "system prompt",
+    "developer message",
+    "admin password",
+    "token",
+    "jwt",
+    "database",
+    "sql",
+    "credentials",
+}
+
+
+class ChatbotRateThrottle(AnonRateThrottle):
+    rate = "20/minute"
+
+
+def is_suspicious_chatbot_message(message):
+    text = (message or "").lower()
+    return any(marker in text for marker in PROMPT_INJECTION_MARKERS) or any(topic in text for topic in FORBIDDEN_TOPICS)
+
+
+def is_chatbot_ip_rate_limited(request):
+    ip_address = get_client_ip(request)
+    if not ip_address:
+        return False
+    window_start = timezone.now() - timedelta(minutes=5)
+    return AuditLog.objects.filter(
+        action__in=["chatbot_query", "chatbot_blocked"],
+        ip_address=ip_address,
+        timestamp__gte=window_start,
+    ).count() >= 30
+
+
+@api_view(["POST"])
 @permission_classes([AllowAny])
+@throttle_classes([ChatbotRateThrottle])
 def chatbot_view(request):
+    if is_chatbot_ip_rate_limited(request):
+        log_security_event(None, "security_alert", "chatbot IP rate limit exceeded", request, resource="chatbot")
+        return Response({"error": "Too many chatbot requests"}, status=429)
 
-    message = request.data.get("message", "").lower()
+    try:
+        message = clean_text(request.data.get("message", ""), 500, "message")
+    except SuspiciousOperation as exc:
+        log_security_event(None, "security_alert", f"chatbot rejected unsafe input: {exc}", request, resource="chatbot")
+        return Response({"response": "Je peux repondre uniquement aux informations publiques de la clinique."}, status=400)
 
-    file_path = os.path.join(os.path.dirname(__file__), "clinic_info.txt")
+    if is_suspicious_chatbot_message(message):
+        log_action(None, "chatbot_blocked", "chatbot", "", f"blocked query: {message[:120]}", request, status="warning")
+        log_security_event(None, "security_alert", "suspicious chatbot request", request, resource="chatbot")
+        return Response({"response": "Je ne peux pas acceder aux donnees internes, medicales, administratives ou aux identifiants."})
 
-    with open(file_path, "r", encoding="utf-8") as f:
-        clinic_info = f.read()
-
-    clinic_info_lower = clinic_info.lower()
-
-    # Bonjour
-    if "bonjour" in message or "bonsoir" in message or "salut" in message:
-
-        reply = "Bonjour 👋 Je suis là pour répondre à vos questions sur notre clinique."
-
-    # Nom clinique
-    elif "nom" in message and "clinique" in message:
-
-        reply = "Clinique Médicale Elite"
-
-    # Adresse
-    elif "adresse" in message:
-
-        start = clinic_info_lower.find("adresse")
-        end = clinic_info_lower.find("téléphone")
-
-        reply = clinic_info[start:end]
-
-    # Horaires
-    elif "horaire" in message or "heure" in message:
-
-        start = clinic_info_lower.find("horaires")
-        end = clinic_info_lower.find("specialites")
-
-        reply = clinic_info[start:end]
-
-    # Spécialités
-    elif "spécialité" in message or "specialite" in message or "spécialités" in message:
-
-        start = clinic_info_lower.find("specialites")
-        end = clinic_info_lower.find("medecins cardiologie")
-
-        reply = clinic_info[start:end]
-
-    # Médecins
-    elif "médecin" in message or "medecin" in message or "docteur" in message or "médecins" in message:
-
-        start = clinic_info_lower.find("medecins cardiologie")
-        end = clinic_info_lower.find("procedure rendez-vous")
-
-        reply = clinic_info[start:end]
-
-    # Rendez-vous
-    elif "rendez" in message or "rdv" in message:
-
-        start = clinic_info_lower.find("procedure rendez-vous")
-        end = clinic_info_lower.find("services disponibles")
-
-        reply = clinic_info[start:end]
-
-    # Ambulance
-    elif "ambulance" in message:
-
-        start = clinic_info_lower.find("ambulance")
-        end = clinic_info_lower.find("visiteurs")
-
-        reply = clinic_info[start:end]
-
-    # Contact
-    elif "telephone" in message or "email" in message or "contact" in message:
-
-        start = clinic_info_lower.find("téléphone")
-        end = clinic_info_lower.find("horaires")
-
-        reply = clinic_info[start:end]
-
-    else:
-
-        reply = """
-Je peux répondre aux questions concernant :
-
-• Médecins
-• Spécialités
-• Rendez-vous
-• Services
-• Ambulance
-• Horaires
-• Adresse
-• Contact
-"""
-
-    return Response({
-        "response": reply
-    })
+    response = public_chatbot_response(message)
+    log_action(None, "chatbot_query", "chatbot", "", message[:200], request)
+    return Response({"response": response})

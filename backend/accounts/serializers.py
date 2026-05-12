@@ -10,4 +10,4 @@ class CustomTokenSerializer(TokenObtainPairSerializer):
             'role': self.user.role
         }
 
-        return data
+        return data 

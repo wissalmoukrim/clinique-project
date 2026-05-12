@@ -9,10 +9,13 @@ from .models import Medecin
 
 
 def serialize_medecin(medecin):
+    full_name = medecin.user.get_full_name().strip() or medecin.user.username
     return {
         "id": medecin.id,
         "user_id": medecin.user_id,
         "username": medecin.user.username,
+        "full_name": full_name,
+        "display_name": f"Dr. {full_name}",
         "specialite": medecin.specialite,
         "telephone": medecin.telephone,
         "numero_ordre": medecin.numero_ordre,
@@ -76,6 +79,52 @@ def create_medecin(request):
     )
     log_action(request.user, "create", "medecins.Medecin", medecin.id, request=request)
     return JsonResponse(serialize_medecin(medecin), status=201)
+
+
+@csrf_exempt
+@method_required("PUT", "PATCH")
+@require_roles("admin")
+def update_medecin(request, medecin_id):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
+
+    try:
+        medecin = Medecin.objects.get(id=medecin_id)
+    except Medecin.DoesNotExist:
+        return json_error("Medecin not found", 404)
+
+    try:
+        if "specialite" in data:
+            medecin.specialite = require_string(data, "specialite", 100)
+        if "telephone" in data:
+            medecin.telephone = optional_string(data, "telephone", 20)
+        if "numero_ordre" in data:
+            medecin.numero_ordre = optional_string(data, "numero_ordre", 50) or None
+        if "experience" in data:
+            medecin.experience = optional_int(data, "experience")
+        if "disponible" in data:
+            medecin.disponible = optional_bool(data, "disponible", medecin.disponible)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    medecin.save()
+    log_action(request.user, "update", "medecins.Medecin", medecin.id, request=request)
+    return JsonResponse(serialize_medecin(medecin))
+
+
+@csrf_exempt
+@method_required("DELETE")
+@require_roles("admin")
+def delete_medecin(request, medecin_id):
+    try:
+        medecin = Medecin.objects.get(id=medecin_id)
+    except Medecin.DoesNotExist:
+        return json_error("Medecin not found", 404)
+
+    medecin.delete()
+    log_action(request.user, "delete", "medecins.Medecin", medecin_id, request=request)
+    return JsonResponse({"message": "Medecin deleted"})
 
 
 @csrf_exempt

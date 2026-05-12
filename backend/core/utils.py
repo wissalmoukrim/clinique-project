@@ -17,7 +17,7 @@ def get_client_ip(request):
     return request.META.get("REMOTE_ADDR")
 
 
-def log_action(user, action, resource="", object_id="", details="", request=None):
+def log_action(user, action, resource="", object_id="", details="", request=None, status="success"):
     return AuditLog.objects.create(
         user=user if getattr(user, "is_authenticated", False) else None,
         action=action,
@@ -26,11 +26,13 @@ def log_action(user, action, resource="", object_id="", details="", request=None
         object_id=str(object_id or ""),
         details=details or "",
         ip_address=get_client_ip(request) if request else None,
+        status=status,
     )
 
 
 def log_security_event(user, action, details, request=None, resource="security"):
-    log = log_action(user, action, resource, "", details, request)
+    status = "failure" if action in {"login_failed", "forbidden_access"} else "warning"
+    log = log_action(user, action, resource, "", details, request, status=status)
     if action in {"login_failed", "forbidden_access"}:
         window_start = timezone.now() - timedelta(minutes=10)
         ip_address = get_client_ip(request) if request else None
@@ -51,6 +53,7 @@ def log_security_event(user, action, details, request=None, resource="security")
                 "",
                 f"Repeated {action}: {details}",
                 request,
+                status="warning",
             )
     return log
 

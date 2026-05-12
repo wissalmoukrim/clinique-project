@@ -1,21 +1,29 @@
 from datetime import timedelta
 
 from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import SuspiciousOperation
+from django.core.validators import validate_email
+from django.db import transaction
 from django.http import JsonResponse
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from core.models import AuditLog
 from core.permissions import ALL_ROLES, method_required, require_roles
-from core.utils import clean_text, get_client_ip, json_error, log_action, log_security_event, parse_json_body, require_fields
+from core.utils import clean_text, get_client_ip, json_error, log_action, log_security_event, optional_bool, optional_int, optional_string, parse_json_body, require_fields, require_string
+from medecins.models import Medecin
+from personnel.models import Personnel
 from .models import User
 from .serializers import CustomTokenSerializer
 
 MAX_LOGIN_ATTEMPTS = 5
 MAX_LOGIN_ATTEMPTS_PER_IP = 10
 IP_RATE_LIMIT_WINDOW_MINUTES = 15
+EMPLOYEE_ROLES = {"medecin", "secretaire", "infirmier", "comptable", "securite", "chauffeur"}
+PERSONNEL_ROLES = {"secretaire", "infirmier", "comptable", "securite", "chauffeur"}
 
 
 def is_ip_rate_limited(request):
@@ -174,6 +182,8 @@ def register_view(request):
 
     if role not in allowed_roles:
         return json_error("Invalid role", 400)
+    if not is_strong_password(password):
+        return json_error(password_policy_message(), 400)
 
     if User.objects.filter(username=username).exists():
         return json_error("User already exists", 400)
@@ -183,6 +193,254 @@ def register_view(request):
 
     return JsonResponse({
         "message": "User created",
+        "id": user.id,
         "username": user.username,
         "role": user.role,
     }, status=201)
+
+
+def is_strong_password(password):
+    if not isinstance(password, str):
+        return False
+    try:
+        validate_password(password)
+    except Exception:
+        return False
+    return True
+
+
+def password_policy_message():
+    return "Password must contain at least 8 characters, uppercase, lowercase, number and special character"
+
+
+def serialize_employee(user):
+    medecin = getattr(user, "medecin", None)
+    personnel = getattr(user, "personnel", None)
+    phone = ""
+    active = user.is_active
+    if medecin:
+        phone = medecin.telephone
+    if personnel:
+        phone = personnel.telephone
+        active = active and personnel.actif
+
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "full_name": user.get_full_name().strip() or user.username,
+        "role": user.role,
+        "telephone": phone,
+        "is_active": user.is_active,
+        "actif": active,
+        "is_locked": user.is_locked,
+        "date_joined": user.date_joined.isoformat() if user.date_joined else None,
+        "last_login": user.last_login.isoformat() if user.last_login else None,
+        "specialite": medecin.specialite if medecin else "",
+        "experience": medecin.experience if medecin else "",
+    }
+
+
+def sync_employee_profile(user, data):
+    telephone = optional_string(data, "telephone", 20)
+    if user.role == "medecin":
+      specialite = optional_string(data, "specialite", 100)
+      experience = optional_int(data, "experience")
+      medecin, _ = Medecin.objects.get_or_create(user=user, defaults={"specialite": specialite or "Medecine generale"})
+      if specialite:
+          medecin.specialite = specialite
+      medecin.telephone = telephone
+      medecin.experience = experience
+      medecin.save()
+    elif user.role in PERSONNEL_ROLES:
+      personnel, _ = Personnel.objects.get_or_create(user=user, defaults={"fonction": user.role})
+      personnel.fonction = user.role
+      personnel.telephone = telephone
+      if "actif" in data:
+          personnel.actif = optional_bool(data, "actif", personnel.actif)
+      personnel.save()
+
+
+@csrf_exempt
+@method_required("GET")
+@require_roles("admin")
+def user_list(request):
+    users = User.objects.select_related("medecin", "personnel").order_by("role", "username")
+    return JsonResponse([serialize_employee(user) for user in users], safe=False)
+
+
+@csrf_exempt
+@require_roles("admin")
+def employee_collection(request):
+    if request.method == "GET":
+        users = User.objects.select_related("medecin", "personnel").filter(role__in=EMPLOYEE_ROLES).order_by("role", "username")
+        return JsonResponse([serialize_employee(user) for user in users], safe=False)
+    if request.method == "POST":
+        return create_employee(request)
+    return json_error("Method not allowed", 405)
+
+
+@csrf_exempt
+@method_required("POST")
+@require_roles("admin")
+def create_employee(request):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
+
+    missing = require_fields(data, ["first_name", "last_name", "username", "email", "role", "password"])
+    if missing:
+        return json_error(f"Missing fields: {', '.join(missing)}", 400)
+
+    try:
+        first_name = require_string(data, "first_name", 100)
+        last_name = require_string(data, "last_name", 100)
+        username = require_string(data, "username", 150)
+        email = require_string(data, "email", 150).lower()
+        role = require_string(data, "role", 20)
+        password = data.get("password")
+        validate_email(email)
+    except Exception:
+        return json_error("Invalid input", 400)
+
+    if role not in EMPLOYEE_ROLES:
+        return json_error("Invalid employee role", 400)
+    if not is_strong_password(password):
+        return json_error(password_policy_message(), 400)
+    if User.objects.filter(username=username).exists():
+        return json_error("Username already exists", 400)
+    if User.objects.filter(email=email).exists():
+        return json_error("Email already exists", 400)
+    if role == "medecin" and not data.get("specialite"):
+        return json_error("Missing fields: specialite", 400)
+
+    try:
+        with transaction.atomic():
+            user = User.objects.create_user(
+                username=username,
+                email=email,
+                password=password,
+                role=role,
+                first_name=first_name,
+                last_name=last_name,
+            )
+            sync_employee_profile(user, data)
+    except SuspiciousOperation:
+        return json_error("Invalid input", 400)
+
+    log_action(request.user, "register", "accounts.User", user.id, "admin employee create", request)
+    return JsonResponse(serialize_employee(user), status=201)
+
+
+@csrf_exempt
+@method_required("PUT", "PATCH", "DELETE")
+@require_roles("admin")
+def employee_detail(request, user_id):
+    try:
+        user = User.objects.select_related("medecin", "personnel").get(id=user_id, role__in=EMPLOYEE_ROLES)
+    except User.DoesNotExist:
+        return json_error("Employee not found", 404)
+
+    if request.method == "DELETE":
+        if user.id == request.user.id:
+            return json_error("You cannot delete your own account", 400)
+        deleted_id = user.id
+        user.delete()
+        log_action(request.user, "delete", "accounts.User", deleted_id, "admin employee delete", request)
+        return JsonResponse({"message": "Employee deleted"})
+
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
+
+    try:
+        if "first_name" in data:
+            user.first_name = optional_string(data, "first_name", 100)
+        if "last_name" in data:
+            user.last_name = optional_string(data, "last_name", 100)
+        if "username" in data:
+            username = require_string(data, "username", 150)
+            if User.objects.exclude(id=user.id).filter(username=username).exists():
+                return json_error("Username already exists", 400)
+            user.username = username
+        if "email" in data:
+            email = require_string(data, "email", 150).lower()
+            validate_email(email)
+            if User.objects.exclude(id=user.id).filter(email=email).exists():
+                return json_error("Email already exists", 400)
+            user.email = email
+        if "role" in data:
+            role = require_string(data, "role", 20)
+            if role not in EMPLOYEE_ROLES:
+                return json_error("Invalid employee role", 400)
+            user.role = role
+        if "is_active" in data:
+            user.is_active = optional_bool(data, "is_active", user.is_active)
+        user.save()
+        sync_employee_profile(user, data)
+    except (SuspiciousOperation, Exception):
+        return json_error("Invalid input", 400)
+
+    log_action(request.user, "update", "accounts.User", user.id, "admin employee update", request)
+    return JsonResponse(serialize_employee(User.objects.select_related("medecin", "personnel").get(id=user.id)))
+
+
+@csrf_exempt
+@method_required("POST")
+@require_roles(*ALL_ROLES)
+def change_password(request):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
+
+    missing = require_fields(data, ["current_password", "new_password"])
+    if missing:
+        return json_error(f"Missing fields: {', '.join(missing)}", 400)
+
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    if not isinstance(current_password, str) or not isinstance(new_password, str):
+        return json_error("Invalid input", 400)
+    if not request.user.check_password(current_password):
+        log_security_event(request.user, "security_alert", "password change failed: invalid current password", request)
+        return json_error("Invalid current password", 400)
+    if not is_strong_password(new_password):
+        return json_error(password_policy_message(), 400)
+
+    request.user.set_password(new_password)
+    request.user.login_attempts = 0
+    request.user.is_locked = False
+    request.user.last_failed_login = None
+    request.user.save(update_fields=["password", "login_attempts", "is_locked", "last_failed_login"])
+    log_action(request.user, "update", "accounts.User", request.user.id, "password changed", request)
+    return JsonResponse({"message": "Password changed"})
+
+
+@csrf_exempt
+@method_required("POST")
+@require_roles("admin")
+def admin_reset_password(request):
+    data = parse_json_body(request)
+    if data is None:
+        return json_error("Invalid JSON", 400)
+
+    missing = require_fields(data, ["user_id"])
+    if missing:
+        return json_error(f"Missing fields: {', '.join(missing)}", 400)
+
+    try:
+        user_id = require_int(data, "user_id")
+        user = User.objects.get(id=user_id)
+    except (SuspiciousOperation, User.DoesNotExist):
+        return json_error("User not found", 404)
+
+    temporary_password = get_random_string(12) + "aA1!"
+    user.set_password(temporary_password)
+    user.login_attempts = 0
+    user.is_locked = False
+    user.last_failed_login = None
+    user.save(update_fields=["password", "login_attempts", "is_locked", "last_failed_login"])
+    log_action(request.user, "update", "accounts.User", user.id, "admin password reset", request)
+    return JsonResponse({"message": "Password reset", "temporary_password": temporary_password})
