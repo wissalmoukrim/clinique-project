@@ -1,145 +1,102 @@
 import { useState } from "react";
-import { publicFetch } from "../api/client";
+import { apiFetch } from "../api/client";
 
 function Chatbot() {
+  const [message, setMessage] = useState("");
+  const [messages, setMessages] = useState([
+    {
+      sender: "bot",
+      text: "Bonjour. Je suis l'assistant patient de la Clinique Medicale Elite. Je peux vous aider avec vos questions de sante, vos rendez-vous et votre suivi.",
+    },
+  ]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-    const [message, setMessage] = useState("");
+  const sendMessage = async () => {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage || loading) return;
 
-    const [messages, setMessages] = useState([
-        {
-            sender: "bot",
-            text: "Bonjour 👋 Je suis le chatbot de la Clinique Médicale Elite. Je suis là pour répondre à vos questions concernant la clinique."
-        }
-    ]);
+    setMessages((prev) => [...prev, { sender: "user", text: trimmedMessage }]);
+    setMessage("");
+    setLoading(true);
 
-    const [open, setOpen] = useState(false);
+    try {
+      const data = await apiFetch("/chatbot/ask/", {
+        method: "POST",
+        body: { message: trimmedMessage.slice(0, 500) },
+      });
 
-    const sendMessage = async () => {
+      setMessages((prev) => [
+        ...prev,
+        { sender: "bot", text: data.response || "Je n'ai pas pu generer une reponse." },
+      ]);
+    } catch (error) {
+      setMessages((prev) => [
+        ...prev,
+        { sender: "bot", text: error.message || "Impossible de contacter l'assistant pour le moment." },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-        if (!message.trim()) return;
+  return (
+    <>
+      <button
+        className="chat-toggle"
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-label="Ouvrir l'assistant patient"
+      >
+        Chat
+      </button>
 
-        const userMessage = {
-            sender: "user",
-            text: message
-        };
+      {open && (
+        <div className="chatbot-container">
+          <div className="chatbot-header">
+            <div className="chatbot-header-left">
+              <div className="bot-avatar">AI</div>
+              <div>
+                <h3>Assistant patient</h3>
+                <span>{loading ? "Reponse..." : "En ligne"}</span>
+              </div>
+            </div>
 
-        setMessages((prev) => [...prev, userMessage]);
-
-        try {
-
-            const data = await publicFetch("/chatbot/ask/", {
-                method: "POST",
-                body: {
-                    message: message.slice(0, 500)
-                }
-            });
-
-            const botMessage = {
-                sender: "bot",
-                text: data.response
-            };
-
-            setMessages((prev) => [...prev, botMessage]);
-
-        } catch (error) {
-
-            setMessages((prev) => [
-                ...prev,
-                {
-                    sender: "bot",
-                    text: "Erreur serveur"
-                }
-            ]);
-        }
-
-        setMessage("");
-    };
-
-    return (
-        <>
-
-            <button
-                className="chat-toggle"
-                onClick={() => setOpen(!open)}
-            >
-                💬
+            <button className="close-btn" type="button" onClick={() => setOpen(false)}>
+              x
             </button>
+          </div>
 
-            {open && (
+          <div className="chatbot-messages">
+            {messages.map((msg, index) => (
+              <div key={index} className={msg.sender === "user" ? "message user" : "message bot"}>
+                {msg.text}
+              </div>
+            ))}
+          </div>
 
-                <div className="chatbot-container">
+          <div className="chatbot-input">
+            <input
+              type="text"
+              placeholder="Ecrivez un message..."
+              value={message}
+              disabled={loading}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  sendMessage();
+                }
+              }}
+            />
 
-                    <div className="chatbot-header">
-
-                        <div className="chatbot-header-left">
-
-                            <div className="bot-avatar">
-                                🤖
-                            </div>
-
-                            <div>
-                                <h3>Chatbot Clinique</h3>
-                                <span>En ligne</span>
-                            </div>
-
-                        </div>
-
-                        <button
-                            className="close-btn"
-                            onClick={() => setOpen(false)}
-                        >
-                            ✕
-                        </button>
-
-                    </div>
-
-                    <div className="chatbot-messages">
-
-                        {messages.map((msg, index) => (
-
-                            <div
-                                key={index}
-                                className={
-                                    msg.sender === "user"
-                                        ? "message user"
-                                        : "message bot"
-                                }
-                            >
-                                {msg.text}
-                            </div>
-
-                        ))}
-
-                    </div>
-
-                    <div className="chatbot-input">
-
-                        <input
-                            type="text"
-                            placeholder="Écrivez un message..."
-                            value={message}
-                            onChange={(e) => setMessage(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                    sendMessage();
-                                }
-                            }}
-                        />
-
-                        <button onClick={sendMessage}>
-                            Envoyer
-                        </button>
-
-                    </div>
-
-                </div>
-
-            )}
-
-        </>
-    );
+            <button type="button" onClick={sendMessage} disabled={loading || !message.trim()}>
+              {loading ? "..." : "Envoyer"}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 export default Chatbot;
-
-     

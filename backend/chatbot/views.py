@@ -3,13 +3,13 @@ from datetime import timedelta
 from django.core.exceptions import SuspiciousOperation
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import AnonRateThrottle
+from rest_framework.throttling import UserRateThrottle
 
-from core.chatbot import FORBIDDEN_TOPICS, public_chatbot_response
 from core.models import AuditLog
 from core.utils import clean_text, get_client_ip, log_action, log_security_event
+from .services import generate_patient_chatbot_response
 
 
 PROMPT_INJECTION_MARKERS = {
@@ -26,13 +26,13 @@ PROMPT_INJECTION_MARKERS = {
 }
 
 
-class ChatbotRateThrottle(AnonRateThrottle):
+class ChatbotRateThrottle(UserRateThrottle):
     rate = "20/minute"
 
 
 def is_suspicious_chatbot_message(message):
     text = (message or "").lower()
-    return any(marker in text for marker in PROMPT_INJECTION_MARKERS) or any(topic in text for topic in FORBIDDEN_TOPICS)
+    return any(marker in text for marker in PROMPT_INJECTION_MARKERS)
 
 
 def is_chatbot_ip_rate_limited(request):
@@ -48,9 +48,19 @@ def is_chatbot_ip_rate_limited(request):
 
 
 @api_view(["POST"])
-@permission_classes([AllowAny])
+@permission_classes([IsAuthenticated])
 @throttle_classes([ChatbotRateThrottle])
 def chatbot_view(request):
+    if getattr(request.user, "role", None) != "patient":
+        log_security_event(
+            request.user,
+            "forbidden_access",
+            f"forbidden chatbot access with role {getattr(request.user, 'role', None)}",
+            request,
+            resource="chatbot",
+        )
+        return Response({"error": "Forbidden"}, status=403)
+
     if is_chatbot_ip_rate_limited(request):
         log_security_event(None, "security_alert", "chatbot IP rate limit exceeded", request, resource="chatbot")
         return Response({"error": "Too many chatbot requests"}, status=429)
@@ -66,6 +76,6 @@ def chatbot_view(request):
         log_security_event(None, "security_alert", "suspicious chatbot request", request, resource="chatbot")
         return Response({"response": "Je ne peux pas acceder aux donnees internes, medicales, administratives ou aux identifiants."})
 
-    response = public_chatbot_response(message)
-    log_action(None, "chatbot_query", "chatbot", "", message[:200], request)
+    response = generate_patient_chatbot_response(request.user, message)
+    log_action(request.user, "chatbot_query", "chatbot", "", message[:200], request)
     return Response({"response": response})

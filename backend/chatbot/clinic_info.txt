@@ -133,14 +133,14 @@ SERVICES DISPONIBLES ->
 
 
 
-AMBULANCE
-========================================
+AMBULANCE: 
+
 
 Les ambulances sont disponibles 24h/24.
 
 
-========================================
-VISITEURS
-========================================
+
+VISITEURS ->
+
 
 Les visiteurs doivent être enregistrés à l'accueil.
