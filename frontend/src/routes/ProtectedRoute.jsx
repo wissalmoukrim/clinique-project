@@ -5,11 +5,11 @@ const ROLE_HOME = {
   admin: "/admin",
   medecin: "/medecin",
   patient: "/patient",
-  secretaire: "/dashboard",
-  infirmier: "/dashboard",
-  comptable: "/dashboard",
-  securite: "/dashboard",
-  chauffeur: "/dashboard",
+  secretaire: "/secretaire",
+  infirmier: "/infirmier",
+  comptable: "/comptable",
+  securite: "/securite",
+  chauffeur: "/chauffeur",
 };
 
 function ProtectedRoute({ children, allowedRoles = [] }) {

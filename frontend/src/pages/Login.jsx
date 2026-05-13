@@ -10,6 +10,16 @@ export function getRedirectPath(role) {
       return "/medecin";
     case "patient":
       return "/patient";
+    case "secretaire":
+      return "/secretaire";
+    case "infirmier":
+      return "/infirmier";
+    case "comptable":
+      return "/comptable";
+    case "securite":
+      return "/securite";
+    case "chauffeur":
+      return "/chauffeur";
     default:
       return "/dashboard";
   }

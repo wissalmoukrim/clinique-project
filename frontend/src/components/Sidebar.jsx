@@ -15,11 +15,11 @@ const ROLE_LINKS = {
     { to: "/patient", label: "Mes RDV", icon: "R" },
     { to: "/patient", label: "Factures", icon: "F" },
   ],
-  secretaire: [{ to: "/dashboard", label: "Reception", icon: "R" }],
-  infirmier: [{ to: "/dashboard", label: "Hospitalisation", icon: "H" }],
-  comptable: [{ to: "/dashboard", label: "Facturation", icon: "F" }],
-  securite: [{ to: "/dashboard", label: "Visiteurs", icon: "V" }],
-  chauffeur: [{ to: "/dashboard", label: "Ambulance", icon: "A" }],
+  secretaire: [{ to: "/secretaire", label: "Reception", icon: "R" }],
+  infirmier: [{ to: "/infirmier", label: "Hospitalisation", icon: "H" }],
+  comptable: [{ to: "/comptable", label: "Facturation", icon: "F" }],
+  securite: [{ to: "/securite", label: "Visiteurs", icon: "V" }],
+  chauffeur: [{ to: "/chauffeur", label: "Ambulance", icon: "A" }],
 };
 
 function Sidebar({ user }) {

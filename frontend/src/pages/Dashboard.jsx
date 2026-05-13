@@ -1,41 +1,28 @@
+import { Navigate } from "react-router-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import Navbar from "../components/Navbar";
 import { apiFetch, getCurrentUser } from "../api/client";
 
 function Dashboard() {
   const user = getCurrentUser();
-  const roleLabel = ROLE_LABELS[user?.role] || user?.role || "-";
+  const path = ROLE_HOME[user?.role] || "/";
 
-  return (
-    <>
-      <Navbar />
-      <main className="page shell-page">
-        <h1>Dashboard {roleLabel}</h1>
-        <div className="stats">
-          <Stat label="Espace" value="1" />
-          <Stat label="Role" value={roleLabel.toUpperCase()} />
-        </div>
-        <section className="panel profile-panel">
-          <h2>{user?.username}</h2>
-          <p>Role: <strong>{roleLabel}</strong></p>
-        </section>
-
-        {user?.role === "secretaire" && <SecretairePanel />}
-        {user?.role === "infirmier" && <InfirmierPanel />}
-        {user?.role === "comptable" && <ComptablePanel />}
-        {user?.role === "securite" && <SecuritePanel />}
-        {user?.role === "chauffeur" && <ChauffeurPanel />}
-      </main>
-    </>
-  );
+  return <Navigate to={path} replace />;
 }
 
-const ROLE_LABELS = {
+export const ROLE_LABELS = {
   secretaire: "Secretaire",
   infirmier: "Infirmier",
   comptable: "Comptable",
   securite: "Securite",
   chauffeur: "Chauffeur ambulance",
+};
+
+const ROLE_HOME = {
+  secretaire: "/secretaire",
+  infirmier: "/infirmier",
+  comptable: "/comptable",
+  securite: "/securite",
+  chauffeur: "/chauffeur",
 };
 
 function Stat({ label, value }) {
@@ -67,7 +54,7 @@ const MEDICAL_SPECIALTIES = [
   "Medecine generale",
 ];
 
-function SecretairePanel() {
+export function SecretairePanel() {
   const [patients, setPatients] = useState([]);
   const [rdvs, setRdvs] = useState([]);
   const [medecins, setMedecins] = useState([]);
@@ -467,7 +454,7 @@ function normalizeText(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function InfirmierPanel() {
+export function InfirmierPanel() {
   const [rows, setRows] = useState([]);
   const [toast, setToast] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -570,7 +557,7 @@ function InfirmierPanel() {
   );
 }
 
-function ComptablePanel() {
+export function ComptablePanel() {
   const [factures, setFactures] = useState([]);
   const [patients, setPatients] = useState([]);
   const [form, setForm] = useState({ patient_id: "", montant: "" });
@@ -699,7 +686,7 @@ function ComptablePanel() {
   );
 }
 
-function SecuritePanel() {
+export function SecuritePanel() {
   const [visiteurs, setVisiteurs] = useState([]);
   const [visites, setVisites] = useState([]);
   const [presentVisits, setPresentVisits] = useState([]);
@@ -923,7 +910,7 @@ function SecuritePanel() {
   );
 }
 
-function ChauffeurPanel() {
+export function ChauffeurPanel() {
   const [ambulances, setAmbulances] = useState([]);
   const [missions, setMissions] = useState([]);
   const [form, setForm] = useState({ ambulance_id: "", patient_nom: "", lieu_depart: "", lieu_arrivee: "" });

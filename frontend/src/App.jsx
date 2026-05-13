@@ -6,6 +6,11 @@ import Dashboard from "./pages/Dashboard";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 import MedecinDashboard from "./pages/medecin/MedecinDashboard";
 import PatientDashboard from "./pages/patient/PatientDashboard";
+import SecretaireDashboard from "./pages/secretaire/SecretaireDashboard";
+import InfirmierDashboard from "./pages/infirmier/InfirmierDashboard";
+import ComptableDashboard from "./pages/comptable/ComptableDashboard";
+import SecuriteDashboard from "./pages/securite/SecuriteDashboard";
+import ChauffeurDashboard from "./pages/chauffeur/ChauffeurDashboard";
 import HomePage from "./pages/public/HomePage";
 import Specialites from "./pages/public/Specialites";
 import MedecinsPublic from "./pages/public/MedecinsPublic";
@@ -60,7 +65,50 @@ function App() {
           }
         />
 
-          
+        <Route
+          path="/secretaire"
+          element={
+            <ProtectedRoute allowedRoles={["secretaire"]}>
+              <SecretaireDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/infirmier"
+          element={
+            <ProtectedRoute allowedRoles={["infirmier"]}>
+              <InfirmierDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/comptable"
+          element={
+            <ProtectedRoute allowedRoles={["comptable"]}>
+              <ComptableDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/securite"
+          element={
+            <ProtectedRoute allowedRoles={["securite"]}>
+              <SecuriteDashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/chauffeur"
+          element={
+            <ProtectedRoute allowedRoles={["chauffeur"]}>
+              <ChauffeurDashboard />
+            </ProtectedRoute>
+          }
+        />
 
 
         <Route path="*" element={<Navigate to="/" replace />} />
