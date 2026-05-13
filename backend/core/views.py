@@ -7,6 +7,7 @@ from .models import AuditLog
 from .chatbot import public_chatbot_response
 from .permissions import ALL_ROLES, method_required, require_roles
 from .utils import clean_text, log_action, parse_json_body, json_error
+from .serializers import AuditLogSerializer
 
 
 @csrf_exempt
@@ -26,19 +27,7 @@ def chatbot_view(request):
 
 
 def serialize_audit_log(log):
-    return {
-        "id": log.id,
-        "user": log.user.username if log.user else "anonymous",
-        "role": log.user.role if log.user else None,
-        "action": log.action,
-        "resource": log.resource,
-        "resource_id": log.resource_id,
-        "object_id": log.object_id,
-        "details": log.details,
-        "ip_address": log.ip_address,
-        "status": log.status,
-        "timestamp": log.timestamp.isoformat(),
-    }
+    return AuditLogSerializer(log).data
 
 
 @csrf_exempt

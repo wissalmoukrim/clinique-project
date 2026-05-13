@@ -6,22 +6,11 @@ from accounts.models import User
 from core.permissions import method_required, require_roles
 from core.utils import json_error, log_action, log_security_event, optional_bool, optional_int, optional_string, parse_json_body, require_fields, require_int, require_string
 from .models import Medecin
+from .serializers import MedecinSerializer
 
 
 def serialize_medecin(medecin):
-    full_name = medecin.user.get_full_name().strip() or medecin.user.username
-    return {
-        "id": medecin.id,
-        "user_id": medecin.user_id,
-        "username": medecin.user.username,
-        "full_name": full_name,
-        "display_name": f"Dr. {full_name}",
-        "specialite": medecin.specialite,
-        "telephone": medecin.telephone,
-        "numero_ordre": medecin.numero_ordre,
-        "disponible": medecin.disponible,
-        "experience": medecin.experience,
-    }
+    return MedecinSerializer(medecin).data
 
 
 @csrf_exempt

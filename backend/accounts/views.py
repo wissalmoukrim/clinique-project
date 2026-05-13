@@ -17,11 +17,12 @@ from core.utils import clean_text, get_client_ip, json_error, log_action, log_se
 from medecins.models import Medecin
 from personnel.models import Personnel
 from .models import User
-from .serializers import CustomTokenSerializer
+from .serializers import CustomTokenSerializer, EmployeeUserSerializer
 
 MAX_LOGIN_ATTEMPTS = 5
 MAX_LOGIN_ATTEMPTS_PER_IP = 10
 IP_RATE_LIMIT_WINDOW_MINUTES = 15
+ACCOUNT_LOCKOUT_MINUTES = 30
 EMPLOYEE_ROLES = {"medecin", "secretaire", "infirmier", "comptable", "securite", "chauffeur"}
 PERSONNEL_ROLES = {"secretaire", "infirmier", "comptable", "securite", "chauffeur"}
 
@@ -38,6 +39,21 @@ def is_ip_rate_limited(request):
         timestamp__gte=window_start,
     ).count()
     return attempts >= MAX_LOGIN_ATTEMPTS_PER_IP
+
+
+def release_expired_account_lock(user):
+    if not user.is_locked or not user.last_failed_login:
+        return False
+
+    unlock_at = user.last_failed_login + timedelta(minutes=ACCOUNT_LOCKOUT_MINUTES)
+    if timezone.now() < unlock_at:
+        return False
+
+    user.is_locked = False
+    user.login_attempts = 0
+    user.last_failed_login = None
+    user.save(update_fields=["is_locked", "login_attempts", "last_failed_login"])
+    return True
 
 
 @csrf_exempt
@@ -69,6 +85,7 @@ def login_view(request):
         log_security_event(None, "login_failed", f"unknown username {username}", request)
         return json_error("Invalid credentials", 401)
 
+    release_expired_account_lock(user)
     if user.is_locked:
         log_security_event(user, "login_failed", "locked account login attempt", request)
         return json_error("Account locked", 403)
@@ -125,6 +142,7 @@ class CustomLoginView(TokenObtainPairView):
             log_security_event(None, "login_failed", f"unknown username {username}", request)
             return json_error("Invalid credentials", 401)
 
+        release_expired_account_lock(user)
         if user.is_locked:
             log_security_event(user, "login_failed", "locked account login attempt", request)
             return json_error("Account locked", 403)
@@ -214,33 +232,7 @@ def password_policy_message():
 
 
 def serialize_employee(user):
-    medecin = getattr(user, "medecin", None)
-    personnel = getattr(user, "personnel", None)
-    phone = ""
-    active = user.is_active
-    if medecin:
-        phone = medecin.telephone
-    if personnel:
-        phone = personnel.telephone
-        active = active and personnel.actif
-
-    return {
-        "id": user.id,
-        "username": user.username,
-        "email": user.email,
-        "first_name": user.first_name,
-        "last_name": user.last_name,
-        "full_name": user.get_full_name().strip() or user.username,
-        "role": user.role,
-        "telephone": phone,
-        "is_active": user.is_active,
-        "actif": active,
-        "is_locked": user.is_locked,
-        "date_joined": user.date_joined.isoformat() if user.date_joined else None,
-        "last_login": user.last_login.isoformat() if user.last_login else None,
-        "specialite": medecin.specialite if medecin else "",
-        "experience": medecin.experience if medecin else "",
-    }
+    return EmployeeUserSerializer(user).data
 
 
 def sync_employee_profile(user, data):

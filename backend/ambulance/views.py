@@ -6,34 +6,15 @@ from core.permissions import method_required, require_roles
 from core.utils import json_error, log_action, log_security_event, optional_bool, optional_int, parse_json_body, require_fields, require_int, require_string
 from personnel.models import Personnel
 from .models import Ambulance, MissionAmbulance
+from .serializers import AmbulanceSerializer, MissionAmbulanceSerializer
 
 
 def serialize_ambulance(ambulance):
-    chauffeur_name = ambulance.chauffeur.user.get_full_name().strip() if ambulance.chauffeur else ""
-    return {
-        "id": ambulance.id,
-        "matricule": ambulance.matricule,
-        "type": ambulance.type,
-        "disponible": ambulance.disponible,
-        "chauffeur": ambulance.chauffeur.user.username if ambulance.chauffeur else None,
-        "chauffeur_display": chauffeur_name or (ambulance.chauffeur.user.username if ambulance.chauffeur else None),
-    }
+    return AmbulanceSerializer(ambulance).data
 
 
 def serialize_mission(mission):
-    chauffeur_name = mission.chauffeur.user.get_full_name().strip() if mission.chauffeur else ""
-    return {
-        "id": mission.id,
-        "ambulance_id": mission.ambulance_id,
-        "ambulance": mission.ambulance.matricule,
-        "chauffeur": mission.chauffeur.user.username if mission.chauffeur else None,
-        "chauffeur_display": chauffeur_name or (mission.chauffeur.user.username if mission.chauffeur else None),
-        "patient_nom": mission.patient_nom,
-        "lieu_depart": mission.lieu_depart,
-        "lieu_arrivee": mission.lieu_arrivee,
-        "date": str(mission.date),
-        "statut": mission.statut,
-    }
+    return MissionAmbulanceSerializer(mission).data
 
 
 @csrf_exempt

@@ -13,6 +13,7 @@ from core.utils import json_error, log_action, log_security_event, optional_stri
 from medecins.models import Medecin
 from patients.models import Patient
 from .models import RendezVous
+from .serializers import RendezVousSerializer
 
 User = get_user_model()
 
@@ -32,23 +33,7 @@ STATUS_ALIASES = {
 
 
 def serialize_rdv(rdv):
-    patient_name = rdv.patient.user.get_full_name().strip() or rdv.patient.user.username
-    medecin_name = rdv.medecin.user.get_full_name().strip() or rdv.medecin.user.username
-    return {
-        "id": rdv.id,
-        "patient_id": rdv.patient_id,
-        "patient": rdv.patient.user.username,
-        "patient_full_name": patient_name,
-        "patient_display": patient_name,
-        "medecin_id": rdv.medecin_id,
-        "medecin": rdv.medecin.user.username,
-        "medecin_full_name": medecin_name,
-        "medecin_display": f"Dr. {medecin_name}",
-        "specialite": rdv.medecin.specialite,
-        "date": str(rdv.date),
-        "heure": str(rdv.heure),
-        "statut": rdv.statut,
-    }
+    return RendezVousSerializer(rdv).data
 
 
 def medecin_has_confirmed_slot(medecin, date, heure, exclude_id=None):

@@ -10,6 +10,7 @@ from rest_framework.throttling import AnonRateThrottle
 from core.chatbot import FORBIDDEN_TOPICS, public_chatbot_response
 from core.models import AuditLog
 from core.utils import clean_text, get_client_ip, log_action, log_security_event
+from .serializers import ChatbotRequestSerializer, ChatbotResponseSerializer
 
 
 PROMPT_INJECTION_MARKERS = {
@@ -55,8 +56,13 @@ def chatbot_view(request):
         log_security_event(None, "security_alert", "chatbot IP rate limit exceeded", request, resource="chatbot")
         return Response({"error": "Too many chatbot requests"}, status=429)
 
+    serializer = ChatbotRequestSerializer(data=request.data)
+    if not serializer.is_valid():
+        log_security_event(None, "security_alert", "chatbot rejected invalid payload", request, resource="chatbot")
+        return Response({"response": "Je peux repondre uniquement aux informations publiques de la clinique."}, status=400)
+
     try:
-        message = clean_text(request.data.get("message", ""), 500, "message")
+        message = clean_text(serializer.validated_data.get("message", ""), 500, "message")
     except SuspiciousOperation as exc:
         log_security_event(None, "security_alert", f"chatbot rejected unsafe input: {exc}", request, resource="chatbot")
         return Response({"response": "Je peux repondre uniquement aux informations publiques de la clinique."}, status=400)
@@ -64,8 +70,9 @@ def chatbot_view(request):
     if is_suspicious_chatbot_message(message):
         log_action(None, "chatbot_blocked", "chatbot", "", f"blocked query: {message[:120]}", request, status="warning")
         log_security_event(None, "security_alert", "suspicious chatbot request", request, resource="chatbot")
-        return Response({"response": "Je ne peux pas acceder aux donnees internes, medicales, administratives ou aux identifiants."})
+        payload = {"response": "Je ne peux pas acceder aux donnees internes, medicales, administratives ou aux identifiants."}
+        return Response(ChatbotResponseSerializer(payload).data)
 
     response = public_chatbot_response(message)
     log_action(None, "chatbot_query", "chatbot", "", message[:200], request)
-    return Response({"response": response})
+    return Response(ChatbotResponseSerializer({"response": response}).data)

@@ -6,26 +6,11 @@ from consultations.models import Consultation
 from core.permissions import method_required, require_roles
 from core.utils import json_error, log_action, log_security_event, optional_string, parse_json_body, require_fields, require_int, require_string
 from .models import Chambre, Hospitalisation
+from .serializers import HospitalisationSerializer
 
 
 def serialize_hospitalisation(hosp):
-    patient_name = hosp.patient.user.get_full_name().strip() or hosp.patient.user.username
-    return {
-        "id": hosp.id,
-        "patient": hosp.patient.user.username,
-        "patient_id": hosp.patient_id,
-        "patient_full_name": patient_name,
-        "patient_display": patient_name,
-        "chambre": hosp.chambre.numero if hosp.chambre else None,
-        "date_entree": str(hosp.date_entree),
-        "date_sortie": str(hosp.date_sortie) if hosp.date_sortie else None,
-        "statut": hosp.statut,
-        "motif": hosp.motif,
-        "observations": hosp.observations,
-        "temperature": hosp.temperature,
-        "tension": hosp.tension,
-        "frequence_cardiaque": hosp.frequence_cardiaque,
-    }
+    return HospitalisationSerializer(hosp).data
 
 
 @csrf_exempt
