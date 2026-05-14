@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import Navbar from "../../components/Navbar";
 import { IMAGES } from "../../assets/images";
+import Chatbot from "../../components/Chatbot";
 
 const SERVICES = [
   { title: "Consultations specialisees", text: "Des parcours de soin coordonnes avec des medecins disponibles." },
@@ -92,6 +93,9 @@ function HomePage() {
           <strong>Clinique Medicale Elite</strong>
           <span>Prise en charge rapide, accès sécurisé, équipe médicale qualifiée.</span>
         </footer>
+
+        <Chatbot />
+        
       </main>
     </>
   );
