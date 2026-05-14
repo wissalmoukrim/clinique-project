@@ -6,21 +6,13 @@ from accounts.models import User
 from core.permissions import method_required, require_roles
 from core.utils import json_error, log_action, optional_string, parse_json_body, require_fields, require_int
 from .models import Personnel
+from .serializers import PersonnelSerializer
 
 PERSONNEL_ROLES = {"secretaire", "infirmier", "comptable", "securite", "chauffeur"}
 
 
 def serialize_personnel(personnel):
-    return {
-        "id": personnel.id,
-        "user_id": personnel.user_id,
-        "username": personnel.user.username,
-        "role": personnel.user.role,
-        "fonction": personnel.fonction,
-        "telephone": personnel.telephone,
-        "adresse": personnel.adresse,
-        "actif": personnel.actif,
-    }
+    return PersonnelSerializer(personnel).data
 
 
 @csrf_exempt

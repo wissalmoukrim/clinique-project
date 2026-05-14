@@ -7,41 +7,19 @@ from core.permissions import method_required, require_roles
 from core.utils import json_error, log_action, log_security_event, optional_string, parse_json_body, require_fields, require_int, require_string
 from personnel.models import Personnel
 from .models import JournalVisite, Visite, Visiteur
+from .serializers import JournalVisiteSerializer, VisiteSerializer, VisiteurSerializer
 
 
 def serialize_visiteur(visiteur):
-    return {
-        "id": visiteur.id,
-        "nom": visiteur.nom,
-        "prenom": visiteur.prenom,
-        "cin": visiteur.cin,
-        "telephone": visiteur.telephone,
-    }
+    return VisiteurSerializer(visiteur).data
 
 
 def serialize_journal(journal):
-    return {
-        "id": journal.id,
-        "visiteur_id": journal.visiteur_id,
-        "visiteur": str(journal.visiteur),
-        "agent_securite": journal.agent_securite.user.username if journal.agent_securite else None,
-        "motif": journal.motif,
-        "date_entree": str(journal.date_entree),
-        "date_sortie": str(journal.date_sortie) if journal.date_sortie else None,
-        "statut": journal.statut,
-    }
+    return JournalVisiteSerializer(journal).data
 
 
 def serialize_visite(visite):
-    return {
-        "id": visite.id,
-        "visiteur_id": visite.visiteur_id,
-        "visiteur": str(visite.visiteur),
-        "motif": visite.motif,
-        "date_entree": str(visite.date_entree),
-        "date_sortie": str(visite.date_sortie) if visite.date_sortie else None,
-        "statut": visite.statut,
-    }
+    return VisiteSerializer(visite).data
 
 
 def normalize_journal_statut(statut):

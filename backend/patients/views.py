@@ -11,25 +11,11 @@ from core.permissions import method_required, require_roles
 from core.utils import json_error, log_action, optional_string, parse_json_body, require_fields, require_int, require_string
 from rendezvous.models import RendezVous
 from .models import Patient
+from .serializers import PatientSerializer
 
 
 def serialize_patient(patient):
-    full_name = patient.user.get_full_name().strip() or patient.user.username
-    return {
-        "id": patient.id,
-        "user_id": patient.user_id,
-        "username": patient.user.username,
-        "email": patient.user.email,
-        "full_name": full_name,
-        "display_name": full_name,
-        "telephone": patient.telephone,
-        "adresse": patient.adresse,
-        "date_naissance": str(patient.date_naissance) if patient.date_naissance else None,
-        "sexe": patient.sexe,
-        "groupe_sanguin": patient.groupe_sanguin,
-        "allergies": patient.allergies,
-        "antecedents": patient.antecedents,
-    }
+    return PatientSerializer(patient).data
 
 
 @csrf_exempt

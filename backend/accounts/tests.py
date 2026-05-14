@@ -1,7 +1,9 @@
 import json
+from datetime import timedelta
 
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 
 from core.models import AuditLog
 
@@ -46,3 +48,20 @@ class AuthSecurityTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertTrue(AuditLog.objects.filter(action="security_alert", user=self.patient).exists())
+
+    def test_expired_account_lock_is_released_on_login(self):
+        self.patient.is_locked = True
+        self.patient.login_attempts = 5
+        self.patient.last_failed_login = timezone.now() - timedelta(minutes=31)
+        self.patient.save(update_fields=["is_locked", "login_attempts", "last_failed_login"])
+
+        response = self.client.post(
+            reverse("jwt_login"),
+            data=json.dumps({"username": "patient", "password": "Strong!123"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.patient.refresh_from_db()
+        self.assertFalse(self.patient.is_locked)
+        self.assertEqual(self.patient.login_attempts, 0)

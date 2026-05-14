@@ -9,42 +9,13 @@ from facturation.models import Facture
 from medecins.models import Medecin
 from rendezvous.models import RendezVous
 from .models import Consultation, Medicament, Ordonnance
+from .serializers import ConsultationSerializer
 
 DEFAULT_CONSULTATION_AMOUNT = "300.00"
 
 
 def serialize_consultation(consultation):
-    patient_name = consultation.patient.user.get_full_name().strip() or consultation.patient.user.username
-    medecin_name = consultation.medecin.user.get_full_name().strip() or consultation.medecin.user.username
-    ordonnance = getattr(consultation, "ordonnance", None)
-    medicaments = []
-    if ordonnance:
-        medicaments = [
-            {
-                "nom": m.nom,
-                "dosage": m.dosage,
-                "frequence": m.frequence,
-                "duree": m.duree,
-            }
-            for m in ordonnance.medicaments.all()
-        ]
-
-    return {
-        "id": consultation.id,
-        "rendezvous_id": consultation.rendezvous_id,
-        "patient": consultation.patient.user.username,
-        "patient_id": consultation.patient_id,
-        "patient_full_name": patient_name,
-        "patient_display": patient_name,
-        "medecin": consultation.medecin.user.username,
-        "medecin_full_name": medecin_name,
-        "medecin_display": f"Dr. {medecin_name}",
-        "date": str(consultation.date),
-        "diagnostic": consultation.diagnostic,
-        "notes": consultation.notes,
-        "traitement": consultation.traitement,
-        "medicaments": medicaments,
-    }
+    return ConsultationSerializer(consultation).data
 
 
 @csrf_exempt
