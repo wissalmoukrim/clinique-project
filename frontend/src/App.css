@@ -170,6 +170,12 @@ td button.danger {
   color: var(--primary);
 }
 
+.public-navbar nav a.nav-button,
+.public-navbar nav a.nav-button.active,
+.public-navbar nav a.nav-button:hover {
+  color: var(--white);
+}
+
 /* Public home */
 .hero {
   min-height: 640px;
