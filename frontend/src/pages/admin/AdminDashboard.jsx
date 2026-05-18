@@ -8,7 +8,7 @@ const EMPTY_SECURITY = { summary: {}, logs: [], locked_users: [] };
 const EMPTY_FORMS = {
   patient: { user_id: "", telephone: "", adresse: "" },
   medecin: { user_id: "", specialite: "", telephone: "", experience: "", disponible: true },
-  ambulance: { matricule: "", type: "standard", disponible: true },
+  ambulance: { matricule: "", type: "standard", disponible: true, chauffeur_id: "" },
   rdv: { patient_id: "", medecin_id: "", date: "", heure: "", statut: "en_attente" },
 };
 
@@ -28,6 +28,7 @@ function AdminDashboard() {
   const [toast, setToast] = useState(null);
   const [modal, setModal] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const toastTimerRef = useRef(null);
 
   const showToast = useCallback((type, text) => {
@@ -70,6 +71,7 @@ function AdminDashboard() {
   const usedMedecinUserIds = useMemo(() => new Set(medecins.map((medecin) => String(medecin.user_id))), [medecins]);
   const patientUsers = users.filter((user) => user.role === "patient" && !usedPatientUserIds.has(String(user.id)));
   const medecinUsers = users.filter((user) => user.role === "medecin" && !usedMedecinUserIds.has(String(user.id)));
+  const chauffeurOptions = useMemo(() => toChauffeurOptions(employees), [employees]);
 
   const updateForm = (name, patch) => {
     setForms((current) => ({ ...current, [name]: { ...current[name], ...patch } }));
@@ -120,6 +122,7 @@ function AdminDashboard() {
   };
 
   const submitCrud = async (request, successText, afterSuccess) => {
+    setSaving(true);
     try {
       await request();
       afterSuccess?.();
@@ -127,6 +130,8 @@ function AdminDashboard() {
       await loadDashboard();
     } catch (err) {
       showToast("error", err.message || "Operation impossible");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -265,7 +270,7 @@ function AdminDashboard() {
                     <Field label="Experience" type="number" placeholder="8" value={employeeForm.experience} onChange={(value) => updateEmployeeForm({ experience: value })} />
                   </>
                 )}
-                <button type="submit">Creer employe</button>
+                <button type="submit" disabled={saving}>{saving ? "Creation..." : "Creer employe"}</button>
               </form>
             </section>
 
@@ -277,7 +282,7 @@ function AdminDashboard() {
             />
 
             <section className="form-grid">
-              <FormPanel title="Nouveau medecin" onSubmit={createMedecin}>
+              <FormPanel title="Nouveau medecin" onSubmit={createMedecin} saving={saving}>
                 <SearchableSelect
                   label="Utilisateur medecin"
                   placeholder="Rechercher un compte medecin"
@@ -291,7 +296,7 @@ function AdminDashboard() {
                 <Field label="Experience" type="number" placeholder="8" value={forms.medecin.experience} onChange={(value) => updateForm("medecin", { experience: value })} />
               </FormPanel>
 
-              <FormPanel title="Nouveau patient" onSubmit={createPatient}>
+              <FormPanel title="Nouveau patient" onSubmit={createPatient} saving={saving}>
                 <SearchableSelect
                   label="Utilisateur patient"
                   placeholder="Rechercher un compte patient"
@@ -304,16 +309,17 @@ function AdminDashboard() {
                 <Field label="Adresse" placeholder="Adresse complete" value={forms.patient.adresse} onChange={(value) => updateForm("patient", { adresse: value })} />
               </FormPanel>
 
-              <FormPanel title="Nouveau rendez-vous" onSubmit={createRdv}>
+              <FormPanel title="Nouveau rendez-vous" onSubmit={createRdv} saving={saving}>
                 <SearchableSelect label="Patient" placeholder="Rechercher un patient" value={forms.rdv.patient_id} options={toEntityOptions(patients)} onChange={(value) => updateForm("rdv", { patient_id: value })} error={fieldErrors.rdv?.patient_id} />
                 <SearchableSelect label="Medecin" placeholder="Rechercher un medecin" value={forms.rdv.medecin_id} options={toDoctorOptions(medecins)} onChange={(value) => updateForm("rdv", { medecin_id: value })} error={fieldErrors.rdv?.medecin_id} />
                 <Field label="Date" type="date" value={forms.rdv.date} onChange={(value) => updateForm("rdv", { date: value })} error={fieldErrors.rdv?.date} />
                 <Field label="Heure" type="time" value={forms.rdv.heure} onChange={(value) => updateForm("rdv", { heure: value })} error={fieldErrors.rdv?.heure} />
               </FormPanel>
 
-              <FormPanel title="Nouvelle ambulance" onSubmit={createAmbulance}>
+              <FormPanel title="Nouvelle ambulance" onSubmit={createAmbulance} saving={saving}>
                 <Field label="Matricule" placeholder="AMB-2026-01" value={forms.ambulance.matricule} onChange={(value) => updateForm("ambulance", { matricule: value })} error={fieldErrors.ambulance?.matricule} />
                 <SelectField label="Type" value={forms.ambulance.type} onChange={(value) => updateForm("ambulance", { type: value })} options={["standard", "medicalisee", "urgence"]} />
+                <SearchableSelect label="Chauffeur" placeholder="Rechercher un chauffeur" value={forms.ambulance.chauffeur_id} options={chauffeurOptions} onChange={(value) => updateForm("ambulance", { chauffeur_id: value })} emptyLabel="Sans chauffeur" />
               </FormPanel>
             </section>
 
@@ -360,9 +366,9 @@ function AdminDashboard() {
                 ["matricule", "Matricule"],
                 ["type", "Type"],
                 ["disponible", "Disponible", (ambulance) => (ambulance.disponible ? "Oui" : "Non")],
-                ["chauffeur", "Chauffeur"],
+                ["chauffeur", "Chauffeur", (ambulance) => ambulance.chauffeur_display || ambulance.chauffeur || "-"],
               ]}
-              renderActions={(ambulance) => <TableActions onEdit={() => openEdit("ambulance", ambulance)} onDelete={() => openDelete("ambulance", ambulance)} />}
+              renderActions={(ambulance) => <TableActions onEdit={() => openEdit("ambulance", ambulance)} onAssign={() => openEdit("ambulance", ambulance)} onDelete={() => openDelete("ambulance", ambulance)} />}
             />
 
             <section className="panel">
@@ -392,12 +398,12 @@ function AdminDashboard() {
       </main>
       {modal?.type === "edit" && (
         <Modal title={`Modifier ${resourceLabel(modal.resource)}`} onClose={() => setModal(null)}>
-          <EditForm modal={modal} patients={patients} medecins={medecins} onChange={updateModalValues} onSubmit={saveEdit} />
+          <EditForm modal={modal} patients={patients} medecins={medecins} chauffeurs={chauffeurOptions} saving={saving} onChange={updateModalValues} onSubmit={saveEdit} />
         </Modal>
       )}
       {modal?.type === "employee-edit" && (
         <Modal title={`Modifier ${modal.item.full_name || modal.item.username}`} onClose={() => setModal(null)}>
-          <EmployeeEditForm values={modal.values} onChange={updateModalValues} onSubmit={saveEdit} />
+          <EmployeeEditForm values={modal.values} saving={saving} onChange={updateModalValues} onSubmit={saveEdit} />
         </Modal>
       )}
       {modal?.type === "employee-delete" && (
@@ -405,7 +411,7 @@ function AdminDashboard() {
           <p className="modal-copy">Cette action supprimera le compte {modal.item.username}. Les mots de passe ne sont jamais affiches.</p>
           <div className="modal-actions">
             <button type="button" className="secondary-button" onClick={() => setModal(null)}>Annuler</button>
-            <button type="button" className="danger" disabled={String(modal.item.id) === String(currentUser?.id)} onClick={confirmDelete}>Supprimer</button>
+            <button type="button" className="danger" disabled={saving || String(modal.item.id) === String(currentUser?.id)} onClick={confirmDelete}>{saving ? "Suppression..." : "Supprimer"}</button>
           </div>
         </Modal>
       )}
@@ -414,7 +420,7 @@ function AdminDashboard() {
           <p className="modal-copy">Cette action supprimera {resourceLabel(modal.resource)} #{modal.item.id}.</p>
           <div className="modal-actions">
             <button type="button" className="secondary-button" onClick={() => setModal(null)}>Annuler</button>
-            <button type="button" className="danger" onClick={confirmDelete}>Supprimer</button>
+            <button type="button" className="danger" disabled={saving} onClick={confirmDelete}>{saving ? "Suppression..." : "Supprimer"}</button>
           </div>
         </Modal>
       )}
@@ -422,13 +428,13 @@ function AdminDashboard() {
   );
 }
 
-function FormPanel({ title, onSubmit, children }) {
+function FormPanel({ title, onSubmit, children, saving }) {
   return (
     <section className="panel form-panel">
       <h2>{title}</h2>
       <form className="stack-form" onSubmit={onSubmit}>
         {children}
-        <button type="submit">Enregistrer</button>
+        <button type="submit" disabled={saving}>{saving ? "Enregistrement..." : "Enregistrer"}</button>
       </form>
     </section>
   );
@@ -512,7 +518,7 @@ function EmployeeTable({ employees, currentUserId, onEdit, onDelete }) {
   );
 }
 
-function EmployeeEditForm({ values, onChange, onSubmit }) {
+function EmployeeEditForm({ values, saving, onChange, onSubmit }) {
   return (
     <form className="stack-form" onSubmit={onSubmit}>
       <div className="form-pair">
@@ -531,7 +537,7 @@ function EmployeeEditForm({ values, onChange, onSubmit }) {
         </div>
       )}
       <p className="modal-copy">Le mot de passe actuel n'est jamais affiche. La reinitialisation peut etre ajoutee via une action dediee.</p>
-      <ModalSubmit />
+      <ModalSubmit saving={saving} />
     </form>
   );
 }
@@ -557,7 +563,7 @@ function SelectField({ label, value, onChange, options }) {
   );
 }
 
-function SearchableSelect({ label, value, options, onChange, placeholder, error }) {
+function SearchableSelect({ label, value, options, onChange, placeholder, error, emptyLabel }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const selected = options.find((option) => String(option.value) === String(value));
@@ -583,6 +589,19 @@ function SearchableSelect({ label, value, options, onChange, placeholder, error 
       />
       {open && (
         <div className="select-menu">
+          {emptyLabel && (
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                onChange("");
+                setQuery("");
+                setOpen(false);
+              }}
+            >
+              {emptyLabel}
+            </button>
+          )}
           {filtered.length ? filtered.map((option) => (
             <button
               type="button"
@@ -658,26 +677,26 @@ function DataTable({ title, rows, columns, renderActions, embedded = false }) {
   return embedded ? <div className="embedded-table">{content}</div> : <section className="panel">{content}</section>;
 }
 
-function EditForm({ modal, patients, medecins, onChange, onSubmit }) {
+function EditForm({ modal, patients, medecins, chauffeurs, saving, onChange, onSubmit }) {
   const values = modal.values;
   if (modal.resource === "patient") {
-    return <form className="stack-form" onSubmit={onSubmit}><Field label="Telephone" value={values.telephone} onChange={(value) => onChange({ telephone: value })} /><Field label="Adresse" value={values.adresse} onChange={(value) => onChange({ adresse: value })} /><ModalSubmit /></form>;
+    return <form className="stack-form" onSubmit={onSubmit}><Field label="Telephone" value={values.telephone} onChange={(value) => onChange({ telephone: value })} /><Field label="Adresse" value={values.adresse} onChange={(value) => onChange({ adresse: value })} /><ModalSubmit saving={saving} /></form>;
   }
   if (modal.resource === "medecin") {
-    return <form className="stack-form" onSubmit={onSubmit}><Field label="Specialite" value={values.specialite} onChange={(value) => onChange({ specialite: value })} /><Field label="Telephone" value={values.telephone} onChange={(value) => onChange({ telephone: value })} /><Field label="Experience" type="number" value={values.experience} onChange={(value) => onChange({ experience: value })} /><SelectField label="Disponible" value={String(values.disponible)} onChange={(value) => onChange({ disponible: value === "true" })} options={["true", "false"]} /><ModalSubmit /></form>;
+    return <form className="stack-form" onSubmit={onSubmit}><Field label="Specialite" value={values.specialite} onChange={(value) => onChange({ specialite: value })} /><Field label="Telephone" value={values.telephone} onChange={(value) => onChange({ telephone: value })} /><Field label="Experience" type="number" value={values.experience} onChange={(value) => onChange({ experience: value })} /><SelectField label="Disponible" value={String(values.disponible)} onChange={(value) => onChange({ disponible: value === "true" })} options={["true", "false"]} /><ModalSubmit saving={saving} /></form>;
   }
   if (modal.resource === "rdv") {
-    return <form className="stack-form" onSubmit={onSubmit}><SearchableSelect label="Patient" value={values.patient_id} options={toEntityOptions(patients)} onChange={(value) => onChange({ patient_id: value })} placeholder="Rechercher un patient" /><SearchableSelect label="Medecin" value={values.medecin_id} options={toDoctorOptions(medecins)} onChange={(value) => onChange({ medecin_id: value })} placeholder="Rechercher un medecin" /><Field label="Date" type="date" value={values.date} onChange={(value) => onChange({ date: value })} /><Field label="Heure" type="time" value={values.heure?.slice(0, 5)} onChange={(value) => onChange({ heure: value })} /><SelectField label="Statut" value={values.statut} onChange={(value) => onChange({ statut: value })} options={["en_attente", "confirme", "annule", "termine"]} /><ModalSubmit /></form>;
+    return <form className="stack-form" onSubmit={onSubmit}><SearchableSelect label="Patient" value={values.patient_id} options={toEntityOptions(patients)} onChange={(value) => onChange({ patient_id: value })} placeholder="Rechercher un patient" /><SearchableSelect label="Medecin" value={values.medecin_id} options={toDoctorOptions(medecins)} onChange={(value) => onChange({ medecin_id: value })} placeholder="Rechercher un medecin" /><Field label="Date" type="date" value={values.date} onChange={(value) => onChange({ date: value })} /><Field label="Heure" type="time" value={values.heure?.slice(0, 5)} onChange={(value) => onChange({ heure: value })} /><SelectField label="Statut" value={values.statut} onChange={(value) => onChange({ statut: value })} options={["en_attente", "confirme", "annule", "termine"]} /><ModalSubmit saving={saving} /></form>;
   }
-  return <form className="stack-form" onSubmit={onSubmit}><Field label="Matricule" value={values.matricule} onChange={(value) => onChange({ matricule: value })} /><SelectField label="Type" value={values.type} onChange={(value) => onChange({ type: value })} options={["standard", "medicalisee", "urgence"]} /><SelectField label="Disponible" value={String(values.disponible)} onChange={(value) => onChange({ disponible: value === "true" })} options={["true", "false"]} /><ModalSubmit /></form>;
+  return <form className="stack-form" onSubmit={onSubmit}><Field label="Matricule" value={values.matricule} onChange={(value) => onChange({ matricule: value })} /><SelectField label="Type" value={values.type} onChange={(value) => onChange({ type: value })} options={["standard", "medicalisee", "urgence"]} /><SelectField label="Disponible" value={String(values.disponible)} onChange={(value) => onChange({ disponible: value === "true" })} options={["true", "false"]} /><SearchableSelect label="Chauffeur" value={values.chauffeur_id} options={chauffeurs} onChange={(value) => onChange({ chauffeur_id: value })} placeholder="Rechercher un chauffeur" emptyLabel="Retirer le chauffeur" /><ModalSubmit saving={saving} /></form>;
 }
 
-function ModalSubmit() {
-  return <div className="modal-actions"><button type="submit">Enregistrer</button></div>;
+function ModalSubmit({ saving }) {
+  return <div className="modal-actions"><button type="submit" disabled={saving}>{saving ? "Enregistrement..." : "Enregistrer"}</button></div>;
 }
 
-function TableActions({ onEdit, onDelete }) {
-  return <div className="row-actions"><button type="button" className="secondary-button" onClick={onEdit}>Edit</button><button type="button" className="danger" onClick={onDelete}>Delete</button></div>;
+function TableActions({ onEdit, onAssign, onDelete }) {
+  return <div className="row-actions"><button type="button" className="secondary-button" onClick={onEdit}>Edit</button>{onAssign && <button type="button" className="secondary-button" onClick={onAssign}>Assign Chauffeur</button>}<button type="button" className="danger" onClick={onDelete}>Delete</button></div>;
 }
 
 function Modal({ title, children, onClose }) {
@@ -771,7 +790,7 @@ function toEditValues(type, item) {
   if (type === "patient") return { telephone: item.telephone || "", adresse: item.adresse || "" };
   if (type === "medecin") return { specialite: item.specialite || "", telephone: item.telephone || "", experience: item.experience || "", disponible: item.disponible ?? true };
   if (type === "rdv") return { patient_id: item.patient_id || "", medecin_id: item.medecin_id || "", date: item.date || "", heure: item.heure?.slice(0, 5) || "", statut: item.statut || "en_attente" };
-  return { matricule: item.matricule || "", type: item.type || "standard", disponible: item.disponible ?? true };
+  return { matricule: item.matricule || "", type: item.type || "standard", disponible: item.disponible ?? true, chauffeur_id: item.chauffeur_id || "" };
 }
 
 function editEndpoint(type, id) {
@@ -792,6 +811,12 @@ function toEntityOptions(items) {
 
 function toDoctorOptions(items) {
   return items.map((item) => ({ value: item.id, label: `${item.username} - ${item.specialite || "General"} #${item.id}` }));
+}
+
+function toChauffeurOptions(items) {
+  return items
+    .filter((item) => item.role === "chauffeur" && item.personnel_id)
+    .map((item) => ({ value: item.personnel_id, label: `${item.full_name || item.username} - ${item.username} #${item.personnel_id}` }));
 }
 
 function resourceLabel(type) {

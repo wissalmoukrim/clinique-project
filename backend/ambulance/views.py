@@ -17,6 +17,14 @@ def serialize_mission(mission):
     return MissionAmbulanceSerializer(mission).data
 
 
+def get_chauffeur_personnel(chauffeur_id):
+    return Personnel.objects.select_related("user").get(
+        id=chauffeur_id,
+        fonction="chauffeur",
+        user__role="chauffeur",
+    )
+
+
 @csrf_exempt
 @require_roles("admin", "chauffeur")
 def ambulance_list(request):
@@ -55,7 +63,7 @@ def create_ambulance(request):
     chauffeur = None
     if chauffeur_id:
         try:
-            chauffeur = Personnel.objects.get(id=chauffeur_id, fonction="chauffeur")
+            chauffeur = get_chauffeur_personnel(chauffeur_id)
         except Personnel.DoesNotExist:
             return json_error("Chauffeur not found", 404)
 
@@ -94,7 +102,7 @@ def update_ambulance(request, ambulance_id):
         chauffeur = None
     elif chauffeur_id:
         try:
-            chauffeur = Personnel.objects.get(id=chauffeur_id, fonction="chauffeur")
+            chauffeur = get_chauffeur_personnel(chauffeur_id)
         except Personnel.DoesNotExist:
             return json_error("Chauffeur not found", 404)
 
@@ -164,7 +172,7 @@ def create_mission(request):
         if request.user.role == "chauffeur":
             chauffeur = Personnel.objects.get(user=request.user, fonction="chauffeur")
         else:
-            chauffeur = Personnel.objects.get(id=chauffeur_id, fonction="chauffeur") if chauffeur_id else ambulance.chauffeur
+            chauffeur = get_chauffeur_personnel(chauffeur_id) if chauffeur_id else ambulance.chauffeur
     except Personnel.DoesNotExist:
         return json_error("Chauffeur not found", 404)
 

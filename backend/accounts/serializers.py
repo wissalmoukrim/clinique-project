@@ -18,6 +18,7 @@ class CustomTokenSerializer(TokenObtainPairSerializer):
 
 class EmployeeUserSerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
+    personnel_id = serializers.SerializerMethodField()
     telephone = serializers.SerializerMethodField()
     actif = serializers.SerializerMethodField()
     specialite = serializers.SerializerMethodField()
@@ -32,6 +33,7 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "full_name",
+            "personnel_id",
             "role",
             "telephone",
             "is_active",
@@ -46,6 +48,10 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         return obj.get_full_name().strip() or obj.username
+
+    def get_personnel_id(self, obj):
+        personnel = getattr(obj, "personnel", None)
+        return personnel.id if personnel else None
 
     def get_telephone(self, obj):
         medecin = getattr(obj, "medecin", None)
