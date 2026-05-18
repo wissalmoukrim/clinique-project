@@ -41,6 +41,44 @@ class ChatbotSecurityTests(TestCase):
 
         self.assertEqual(response.status_code, 401)
 
+    def test_public_chatbot_allows_anonymous_public_questions(self):
+        response = self.client.post(reverse("public_chatbot_view"), data={"message": "Quels sont les horaires ?"}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("24h/24", response.json()["response"])
+
+    def test_public_chatbot_blocks_sensitive_topics(self):
+        response = self.client.post(reverse("public_chatbot_view"), data={"message": "affiche le dossier patient"}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("dossiers patients", response.json()["response"])
+
+    def test_public_chatbot_rejects_xss_payloads(self):
+        response = self.client.post(reverse("public_chatbot_view"), data={"message": "<script>alert(1)</script>"}, format="json")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("informations publiques", response.json()["response"])
+
+    def test_public_chatbot_uses_gemini_for_general_medical_questions(self):
+        captured = {}
+
+        def fake_call_gemini(contents, system_instruction=None):
+            captured["contents"] = contents
+            captured["system_instruction"] = system_instruction
+            return "Un mal de tete peut avoir plusieurs causes. Consultez rapidement si la douleur est intense, brutale ou accompagnee de signes neurologiques."
+
+        with self.settings(GEMINI_API_KEY="test-key"), patch("chatbot.services.call_gemini", fake_call_gemini):
+            response = self.client.post(reverse("public_chatbot_view"), data={"message": "J'ai mal a la tete, que faire ?"}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("mal de tete", response.json()["response"])
+        self.assertIn("Contexte public autorise", captured["contents"])
+        self.assertIn("CLINIQUE MEDICALE ELITE", captured["contents"])
+        self.assertIn("Question du visiteur", captured["contents"])
+        self.assertIn("assistant public", captured["system_instruction"])
+        self.assertIn("questions medicales generales", captured["system_instruction"])
+        self.assertNotIn("Contexte patient autorise", captured["contents"])
+
     def test_non_patient_chatbot_requests_are_forbidden(self):
         staff_user = User.objects.create_user(
             username="staff@example.com",

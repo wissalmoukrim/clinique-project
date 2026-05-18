@@ -3,15 +3,15 @@ from datetime import timedelta
 from django.core.exceptions import SuspiciousOperation
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import UserRateThrottle
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 from core.models import AuditLog
 from core.utils import clean_text, get_client_ip, log_action, log_security_event
 
 
-from .services import generate_patient_chatbot_response
+from .services import generate_patient_chatbot_response, generate_public_chatbot_response
 
 from .serializers import ChatbotRequestSerializer, ChatbotResponseSerializer
 
@@ -38,6 +38,10 @@ class ChatbotRateThrottle(UserRateThrottle):
     rate = "20/minute"
 
 
+class PublicChatbotRateThrottle(AnonRateThrottle):
+    rate = "15/minute"
+
+
 def is_suspicious_chatbot_message(message):
     text = (message or "").lower()
     return any(marker in text for marker in PROMPT_INJECTION_MARKERS)
@@ -53,6 +57,44 @@ def is_chatbot_ip_rate_limited(request):
         ip_address=ip_address,
         timestamp__gte=window_start,
     ).count() >= 30
+
+
+def validate_public_chatbot_message(request):
+    serializer = ChatbotRequestSerializer(data=request.data)
+    if not serializer.is_valid():
+        log_security_event(None, "security_alert", "public chatbot rejected invalid payload", request, resource="chatbot")
+        return None, Response({"response": "Je peux repondre uniquement aux informations publiques de la clinique."}, status=400)
+
+    try:
+        message = clean_text(serializer.validated_data.get("message", ""), 500, "message")
+    except SuspiciousOperation as exc:
+        log_security_event(None, "security_alert", f"public chatbot rejected unsafe input: {exc}", request, resource="chatbot")
+        return None, Response({"response": "Je peux repondre uniquement aux informations publiques de la clinique."}, status=400)
+
+    return message, None
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([PublicChatbotRateThrottle])
+def public_chatbot_view(request):
+    if is_chatbot_ip_rate_limited(request):
+        log_security_event(None, "security_alert", "public chatbot IP rate limit exceeded", request, resource="chatbot")
+        return Response({"error": "Too many chatbot requests"}, status=429)
+
+    message, error_response = validate_public_chatbot_message(request)
+    if error_response:
+        return error_response
+
+    if is_suspicious_chatbot_message(message):
+        log_action(None, "chatbot_blocked", "chatbot", "", f"blocked public query: {message[:120]}", request, status="warning")
+        log_security_event(None, "security_alert", "suspicious public chatbot request", request, resource="chatbot")
+        payload = {"response": "Je ne peux pas acceder aux donnees internes, medicales, administratives ou aux identifiants."}
+        return Response(ChatbotResponseSerializer(payload).data)
+
+    response = generate_public_chatbot_response(message)
+    log_action(None, "chatbot_query", "chatbot", "", f"public query: {message[:200]}", request)
+    return Response(ChatbotResponseSerializer({"response": response}).data)
 
 
 @api_view(["POST"])
